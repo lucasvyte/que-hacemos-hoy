@@ -1,0 +1,44 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isMember(gid) {
+      return signedIn() && request.auth.uid in get(/databases/$(database)/documents/groups/$(gid)).data.members;
+    }
+
+    // Cada persona solo ve y cambia su propio perfil (en qué lista está)
+    match /users/{uid} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    // Códigos de invitación: se leen de a uno (hay que saber el código), nunca se listan
+    match /invites/{code} {
+      allow get: if signedIn();
+      allow create: if signedIn()
+        && request.auth.uid in getAfter(/databases/$(database)/documents/groups/$(request.resource.data.groupId)).data.members;
+      allow delete: if signedIn() && isMember(resource.data.groupId);
+    }
+
+    match /groups/{gid} {
+      allow get: if signedIn() && request.auth.uid in resource.data.members;
+      allow create: if signedIn() && request.resource.data.members == [request.auth.uid];
+      allow update: if signedIn() && (
+        // un miembro puede cambiar nombre, código, etc., pero no la lista de miembros
+        (request.auth.uid in resource.data.members
+          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['members']))
+        ||
+        // alguien nuevo se suma solo a sí mismo, y solo con un código válido de esta lista
+        (!(request.auth.uid in resource.data.members)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberInfo', 'lastJoinCode'])
+          && request.resource.data.members == resource.data.members.concat([request.auth.uid])
+          && request.resource.data.memberInfo.diff(resource.data.memberInfo).affectedKeys().hasOnly([request.auth.uid])
+          && get(/databases/$(database)/documents/invites/$(request.resource.data.lastJoinCode)).data.groupId == gid)
+      );
+
+      // Ítems y fotos: solo los miembros de la lista
+      match /{sub=**} {
+        allow read, write: if isMember(gid);
+      }
+    }
+  }
+}
