@@ -17,8 +17,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.6.1";
+const VERSION = "0.6.2";
 const CHANGELOG = [
+  ["0.6.2","La opción de lista privada ahora se llama “Mi lista”."],
   ["0.6.1","Al crear una lista nueva, viene elegida “Privada” de entrada."],
   ["0.6.0","Varias listas: cada uno puede tener su lista privada (solo la ve quien la creó) y listas compartidas con hasta 10 personas; se cambia de lista tocando el nombre arriba. Planes: elegí lugares, ordenalos como recorrido del día, miralos numerados en el mapa y abrí el camino en Google Maps."],
   ["0.5.0","Completar solo: pegá o dictá la descripción del reel y la app llena el barrio, el nombre del lugar, la lista y la ubicación si dice la dirección."],
@@ -709,7 +710,7 @@ function listsSheet(){
       }).join("") || `<span class="hint">Cargando…</span>`}</div>
       <div class="sec">Nueva lista</div>
       <label>Nombre<input id="nlName" type="text" maxlength="40" placeholder="Ej.: Con amigos, Mis cosas"></label>
-      <div class="pills" role="group" aria-label="Quién la ve"><button type="button" class="pill" data-np="1" aria-pressed="${priv}">🔒 Privada, solo yo</button><button type="button" class="pill" data-np="0" aria-pressed="${!priv}">👥 Compartida</button></div>
+      <div class="pills" role="group" aria-label="Quién la ve"><button type="button" class="pill" data-np="1" aria-pressed="${priv}">🔒 Mi lista</button><button type="button" class="pill" data-np="0" aria-pressed="${!priv}">👥 Compartida</button></div>
       <span class="hint" id="nlHint">${priv ? "Solo vos la ves. Si después querés, la podés compartir." : `Se suma gente con un código (hasta ${MAX_MEMBERS} personas).`}</span>
       <button type="button" class="btn primary" id="nlCreate">Crear lista</button>
       <div class="sec">Sumarme a otra lista</div>
