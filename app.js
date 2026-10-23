@@ -17,8 +17,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.6.0";
+const VERSION = "0.6.1";
 const CHANGELOG = [
+  ["0.6.1","Al crear una lista nueva, viene elegida “Privada” de entrada."],
   ["0.6.0","Varias listas: cada uno puede tener su lista privada (solo la ve quien la creó) y listas compartidas con hasta 10 personas; se cambia de lista tocando el nombre arriba. Planes: elegí lugares, ordenalos como recorrido del día, miralos numerados en el mapa y abrí el camino en Google Maps."],
   ["0.5.0","Completar solo: pegá o dictá la descripción del reel y la app llena el barrio, el nombre del lugar, la lista y la ubicación si dice la dirección."],
   ["0.4.1","Más seguridad: la lista admite hasta 2 personas, solo vale el código vigente, se controlan los datos que se guardan y se verifica la librería del mapa."],
@@ -696,7 +697,7 @@ function planSheet(plan, preStop){
 
 /* ---------- listas: cambiar, crear, sumarse ---------- */
 function listsSheet(){
-  let priv = false;
+  let priv = true;
   const draw = ()=>{
     openSheet(`
       <h2>Tus listas</h2>
@@ -708,7 +709,7 @@ function listsSheet(){
       }).join("") || `<span class="hint">Cargando…</span>`}</div>
       <div class="sec">Nueva lista</div>
       <label>Nombre<input id="nlName" type="text" maxlength="40" placeholder="Ej.: Con amigos, Mis cosas"></label>
-      <div class="pills" role="group" aria-label="Quién la ve"><button type="button" class="pill" data-np="0" aria-pressed="${!priv}">👥 Compartida</button><button type="button" class="pill" data-np="1" aria-pressed="${priv}">🔒 Privada, solo yo</button></div>
+      <div class="pills" role="group" aria-label="Quién la ve"><button type="button" class="pill" data-np="1" aria-pressed="${priv}">🔒 Privada, solo yo</button><button type="button" class="pill" data-np="0" aria-pressed="${!priv}">👥 Compartida</button></div>
       <span class="hint" id="nlHint">${priv ? "Solo vos la ves. Si después querés, la podés compartir." : `Se suma gente con un código (hasta ${MAX_MEMBERS} personas).`}</span>
       <button type="button" class="btn primary" id="nlCreate">Crear lista</button>
       <div class="sec">Sumarme a otra lista</div>
@@ -1104,7 +1105,7 @@ function menuSheet(){
 /* ---------- eventos ---------- */
 $("loginBtn").onclick = async ()=>{ $("loginErr").hidden = true; try{ await store.login(); }catch(e){ loginError(e); } };
 $("gLogout").onclick = ()=>store.logout();
-let gPriv = false;
+let gPriv = true;
 document.querySelectorAll("[data-gpriv]").forEach(b=>b.onclick=()=>{ gPriv = b.dataset.gpriv==="1"; document.querySelectorAll("[data-gpriv]").forEach(x=>x.setAttribute("aria-pressed", x===b)); });
 $("gCreate").onclick = async ()=>{
   const btn = $("gCreate"); btn.disabled = true; $("gErr").hidden = true;
