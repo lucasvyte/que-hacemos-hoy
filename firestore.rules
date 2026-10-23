@@ -2,42 +2,98 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
+    function groupDoc(gid) { return get(/databases/$(database)/documents/groups/$(gid)); }
     function isMember(gid) {
-      return signedIn() && request.auth.uid in get(/databases/$(database)/documents/groups/$(gid)).data.members;
+      return signedIn() && request.auth.uid in groupDoc(gid).data.members;
+    }
+    // Máximo de personas por lista. Si algún día quieren sumar a alguien más, subir este número.
+    function maxMembers() { return 2; }
+
+    // Texto opcional: puede faltar o ser null; si está, tiene que ser texto de hasta "max" caracteres
+    function optStr(d, k, max) { return !(k in d) || d[k] == null || (d[k] is string && d[k].size() <= max); }
+    function optNum(d, k) { return !(k in d) || d[k] == null || d[k] is number; }
+
+    function validMemberInfo(m) {
+      return m.keys().hasOnly(['name', 'photo'])
+        && optStr(m, 'name', 100) && optStr(m, 'photo', 2000);
+    }
+
+    function validItem(d) {
+      return d.title is string && d.title.size() <= 200
+        && optStr(d, 'list', 30)
+        && optStr(d, 'note', 1000) && optStr(d, 'memory', 1000)
+        && optStr(d, 'zona', 100)
+        && optStr(d, 'link', 2000) && optStr(d, 'maps', 2000)
+        && optStr(d, 'createdBy', 128)
+        && (!('tags' in d) || (d.tags is list && d.tags.size() <= 30))
+        && optNum(d, 'lat') && optNum(d, 'lng')
+        && optNum(d, 'price') && optNum(d, 'rating')
+        && optNum(d, 'createdAt') && optNum(d, 'doneAt');
     }
 
     // Cada persona solo ve y cambia su propio perfil (en qué lista está)
     match /users/{uid} {
-      allow read, write: if signedIn() && request.auth.uid == uid;
+      allow read, delete: if signedIn() && request.auth.uid == uid;
+      allow create, update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['groupId'])
+        && request.resource.data.groupId is string;
     }
 
-    // Códigos de invitación: se leen de a uno (hay que saber el código), nunca se listan
+    // Códigos de invitación: se leen de a uno (hay que saber el código), nunca se listan.
+    // Solo puede existir el código vigente de cada lista.
     match /invites/{code} {
       allow get: if signedIn();
       allow create: if signedIn()
-        && request.auth.uid in getAfter(/databases/$(database)/documents/groups/$(request.resource.data.groupId)).data.members;
+        && code.matches('^[A-Z0-9]{6}$')
+        && request.resource.data.keys().hasOnly(['groupId'])
+        && request.auth.uid in getAfter(/databases/$(database)/documents/groups/$(request.resource.data.groupId)).data.members
+        && getAfter(/databases/$(database)/documents/groups/$(request.resource.data.groupId)).data.inviteCode == code;
       allow delete: if signedIn() && isMember(resource.data.groupId);
     }
 
     match /groups/{gid} {
       allow get: if signedIn() && request.auth.uid in resource.data.members;
-      allow create: if signedIn() && request.resource.data.members == [request.auth.uid];
+
+      allow create: if signedIn()
+        && request.resource.data.members == [request.auth.uid]
+        && request.resource.data.keys().hasOnly(['name', 'members', 'memberInfo', 'inviteCode', 'createdAt'])
+        && request.resource.data.name is string && request.resource.data.name.size() <= 60
+        && request.resource.data.inviteCode is string
+        && request.resource.data.memberInfo.keys().hasOnly([request.auth.uid])
+        && validMemberInfo(request.resource.data.memberInfo[request.auth.uid]);
+
       allow update: if signedIn() && (
-        // un miembro puede cambiar nombre, código, etc., pero no la lista de miembros
+        // un miembro puede cambiar el nombre y el código, nada más
         (request.auth.uid in resource.data.members
-          && !request.resource.data.diff(resource.data).affectedKeys().hasAny(['members']))
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'inviteCode'])
+          && request.resource.data.name is string && request.resource.data.name.size() <= 60
+          && request.resource.data.inviteCode is string)
         ||
-        // alguien nuevo se suma solo a sí mismo, y solo con un código válido de esta lista
+        // alguien nuevo se suma solo a sí mismo, con el código vigente, y solo si hay lugar
         (!(request.auth.uid in resource.data.members)
+          && resource.data.members.size() < maxMembers()
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberInfo', 'lastJoinCode'])
           && request.resource.data.members == resource.data.members.concat([request.auth.uid])
           && request.resource.data.memberInfo.diff(resource.data.memberInfo).affectedKeys().hasOnly([request.auth.uid])
+          && validMemberInfo(request.resource.data.memberInfo[request.auth.uid])
+          && request.resource.data.lastJoinCode == resource.data.inviteCode
           && get(/databases/$(database)/documents/invites/$(request.resource.data.lastJoinCode)).data.groupId == gid)
       );
 
-      // Ítems y fotos: solo los miembros de la lista
-      match /{sub=**} {
-        allow read, write: if isMember(gid);
+      // Ítems: solo los miembros, con tamaños razonables
+      match /items/{id} {
+        allow read, delete: if isMember(gid);
+        allow create, update: if isMember(gid) && validItem(request.resource.data);
+      }
+
+      // Fotos: solo los miembros, y solo una imagen JPEG guardada dentro del documento
+      match /photos/{id} {
+        allow read, delete: if isMember(gid);
+        allow create, update: if isMember(gid)
+          && request.resource.data.keys().hasOnly(['data'])
+          && request.resource.data.data is string
+          && request.resource.data.data.matches('^data:image/jpeg;base64,.*')
+          && request.resource.data.data.size() < 1048000;
       }
     }
   }

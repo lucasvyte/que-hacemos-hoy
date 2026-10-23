@@ -15,8 +15,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.4.0";
+const VERSION = "0.4.1";
 const CHANGELOG = [
+  ["0.4.1","Más seguridad: la lista admite hasta 2 personas, solo vale el código vigente, se controlan los datos que se guardan y se verifica la librería del mapa."],
   ["0.4.0","App instalable para Android: entrar con Google, lista compartida con código de invitación, compartir reels desde Instagram, mapa con un pin por lugar y funciona sin conexión."],
   ["0.3.0","Vista Barrios, links de Instagram reconocidos y campo aparte para la ubicación en Maps."],
   ["0.2.0","Barrio o zona, etiquetas, buscador y filtros, foto y recuerdo al marcar algo como hecho, número de versión."],
