@@ -17,8 +17,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.6.2";
+const VERSION = "0.6.3";
 const CHANGELOG = [
+  ["0.6.3","Las actualizaciones llegan apenas se publican (antes podían tardar hasta 10 minutos)."],
   ["0.6.2","La opción de lista privada ahora se llama “Mi lista”."],
   ["0.6.1","Al crear una lista nueva, viene elegida “Privada” de entrada."],
   ["0.6.0","Varias listas: cada uno puede tener su lista privada (solo la ve quien la creó) y listas compartidas con hasta 10 personas; se cambia de lista tocando el nombre arriba. Planes: elegí lugares, ordenalos como recorrido del día, miralos numerados en el mapa y abrí el camino en Google Maps."],
