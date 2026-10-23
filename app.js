@@ -3,7 +3,8 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/fireba
 import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager,
-  doc, getDoc, setDoc, updateDoc, deleteDoc, collection, onSnapshot, writeBatch, arrayUnion }
+  doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, onSnapshot, writeBatch, arrayUnion, arrayRemove,
+  deleteField, query, where }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 import { parseCaption } from "./caption.js";
 
@@ -16,8 +17,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.5.0";
+const VERSION = "0.6.0";
 const CHANGELOG = [
+  ["0.6.0","Varias listas: cada uno puede tener su lista privada (solo la ve quien la creó) y listas compartidas con hasta 10 personas; se cambia de lista tocando el nombre arriba. Planes: elegí lugares, ordenalos como recorrido del día, miralos numerados en el mapa y abrí el camino en Google Maps."],
   ["0.5.0","Completar solo: pegá o dictá la descripción del reel y la app llena el barrio, el nombre del lugar, la lista y la ubicación si dice la dirección."],
   ["0.4.1","Más seguridad: la lista admite hasta 2 personas, solo vale el código vigente, se controlan los datos que se guardan y se verifica la librería del mapa."],
   ["0.4.0","App instalable para Android: entrar con Google, lista compartida con código de invitación, compartir reels desde Instagram, mapa con un pin por lugar y funciona sin conexión."],
@@ -35,7 +37,8 @@ const BASE_TAGS = ["Día de lluvia","Aniversario","Con amigos","Al aire libre","
 const BA = [-34.6037, -58.3816];
 const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
-const state = { items:[], tab:"actividad", view:"pend", q:"", zona:"", tag:"",
+const MAX_MEMBERS = 10;   // tiene que coincidir con maxMembers() en firestore.rules
+const state = { items:[], plans:[], lists:[], plansLoaded:false, tab:"actividad", view:"pend", q:"", zona:"", tag:"",
   me:null, group:null, gid:null, loaded:false, lastPick:null, share:null, installEvt:null,
   mapShowDone:false, mapLists:new Set(Object.keys(LISTS)), mapFitted:false };
 const $ = id => document.getElementById(id);
@@ -113,8 +116,9 @@ function firebaseStore(){
   let fs;
   try{ fs = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) }); }
   catch{ fs = getFirestore(app); }
-  let unsubItems = null, unsubGroup = null;
-  const itemsPath = () => `groups/${state.gid}/items`;
+  let unsubItems = null, unsubGroup = null, unsubPlans = null;
+  const itemsPath = (gid = state.gid) => `groups/${gid}/items`;
+  const plansPath = () => `groups/${state.gid}/plans`;
   const report = e => { console.error(e); toast(e && e.code==="permission-denied" ? "No tenés permiso para cambiar esta lista." : "No se pudo guardar. Se reintenta cuando vuelva la conexión."); };
   return {
     start(onUser){
@@ -131,14 +135,19 @@ function firebaseStore(){
       }
     },
     logout(){ this.stop(); return signOut(auth); },
-    stop(){ unsubItems && unsubItems(); unsubGroup && unsubGroup(); unsubItems = unsubGroup = null; },
+    stop(){ [unsubItems, unsubGroup, unsubPlans].forEach(u=>u && u()); unsubItems = unsubGroup = unsubPlans = null; },
     async myGroupId(){ const s = await getDoc(doc(fs, "users", state.me.uid)); return s.exists() ? (s.data().groupId || null) : null; },
-    async createGroup(name){
+    async myLists(){
+      const s = await getDocs(query(collection(fs, "groups"), where("members", "array-contains", state.me.uid)));
+      return s.docs.map(d=>({ id:d.id, ...d.data() }));
+    },
+    setCurrent(gid){ setDoc(doc(fs, "users", state.me.uid), { groupId:gid }).catch(()=>{}); },
+    async createGroup(name, priv){
       const gref = doc(collection(fs, "groups"));
-      const code = genCode();
+      const code = priv ? "" : genCode();
       const b = writeBatch(fs);
-      b.set(gref, { name, members:[state.me.uid], memberInfo:{ [state.me.uid]:{ name:state.me.name, photo:state.me.photo } }, inviteCode:code, createdAt:Date.now() });
-      b.set(doc(fs, "invites", code), { groupId:gref.id });
+      b.set(gref, { name, members:[state.me.uid], memberInfo:{ [state.me.uid]:{ name:state.me.name, photo:state.me.photo } }, inviteCode:code, private:!!priv, createdAt:Date.now() });
+      if(code) b.set(doc(fs, "invites", code), { groupId:gref.id });
       b.set(doc(fs, "users", state.me.uid), { groupId:gref.id });
       await b.commit();
       return gref.id;
@@ -147,9 +156,42 @@ function firebaseStore(){
       const inv = await getDoc(doc(fs, "invites", code));
       if(!inv.exists()) throw { code:"not-found" };
       const gid = inv.data().groupId;
-      await updateDoc(doc(fs, "groups", gid), { members:arrayUnion(state.me.uid), ["memberInfo."+state.me.uid]:{ name:state.me.name, photo:state.me.photo }, lastJoinCode:code });
+      if(state.lists.some(l=>l.id===gid)) return gid;   // ya estaba en esa lista
+      try{
+        await updateDoc(doc(fs, "groups", gid), { members:arrayUnion(state.me.uid), ["memberInfo."+state.me.uid]:{ name:state.me.name, photo:state.me.photo }, lastJoinCode:code });
+      }catch(e){ if(e && e.code==="permission-denied") throw { code:"full" }; throw e; }
       await setDoc(doc(fs, "users", state.me.uid), { groupId:gid });
       return gid;
+    },
+    rename(name){ return updateDoc(doc(fs, "groups", state.gid), { name }); },
+    async makeShared(){
+      const code = genCode(), b = writeBatch(fs);
+      b.update(doc(fs, "groups", state.gid), { private:false, inviteCode:code });
+      b.set(doc(fs, "invites", code), { groupId:state.gid });
+      await b.commit();
+    },
+    async makePrivate(){
+      const old = state.group.inviteCode, b = writeBatch(fs);
+      b.update(doc(fs, "groups", state.gid), { private:true, inviteCode:"" });
+      if(old) b.delete(doc(fs, "invites", old));
+      await b.commit();
+    },
+    leave(){ return updateDoc(doc(fs, "groups", state.gid), { members:arrayRemove(state.me.uid), ["memberInfo."+state.me.uid]:deleteField() }); },
+    async deleteGroup(){
+      const gid = state.gid, code = state.group && state.group.inviteCode;
+      const refs = [];
+      for(const sub of ["items", "plans", "photos"]){
+        const s = await getDocs(collection(fs, `groups/${gid}/${sub}`));
+        s.docs.forEach(d=>refs.push(d.ref));
+      }
+      this.stop();
+      for(let n=0; n<refs.length; n+=400){
+        const b = writeBatch(fs); refs.slice(n, n+400).forEach(r=>b.delete(r)); await b.commit();
+      }
+      const b = writeBatch(fs);
+      b.delete(doc(fs, "groups", gid));
+      if(code) b.delete(doc(fs, "invites", code));
+      await b.commit();
     },
     async newCode(){
       const old = state.group.inviteCode, code = genCode();
@@ -159,13 +201,17 @@ function firebaseStore(){
       if(old) b.delete(doc(fs, "invites", old));
       await b.commit();
     },
-    watch(gid, onGroup, onItems, onError){
+    watch(gid, onGroup, onItems, onPlans, onError){
       this.stop();
       unsubGroup = onSnapshot(doc(fs, "groups", gid), s => onGroup(s.exists() ? s.data() : null), onError);
       unsubItems = onSnapshot(collection(fs, `groups/${gid}/items`), s => onItems(s.docs.map(d=>({ id:d.id, ...d.data() }))), onError);
+      unsubPlans = onSnapshot(collection(fs, `groups/${gid}/plans`), s => onPlans(s.docs.map(d=>({ id:d.id, ...d.data() }))), e=>console.error(e));
     },
     newId(){ return doc(collection(fs, itemsPath())).id; },
-    save(id, data){ setDoc(doc(fs, itemsPath(), id), data, { merge:true }).catch(report); },
+    save(id, data, gid){ setDoc(doc(fs, itemsPath(gid || state.gid), id), data, { merge:true }).catch(report); },
+    newPlanId(){ return doc(collection(fs, plansPath())).id; },
+    savePlan(id, data){ setDoc(doc(fs, plansPath(), id), data, { merge:true }).catch(report); },
+    removePlan(id){ deleteDoc(doc(fs, plansPath(), id)).catch(report); },
     remove(id){ deleteDoc(doc(fs, itemsPath(), id)).catch(report); deleteDoc(doc(fs, `groups/${state.gid}/photos`, id)).catch(()=>{}); },
     async getPhoto(id){ const s = await getDoc(doc(fs, `groups/${state.gid}/photos`, id)); return s.exists() ? s.data().data : ""; },
     setPhoto(id, data){ return setDoc(doc(fs, `groups/${state.gid}/photos`, id), { data }); },
@@ -181,17 +227,38 @@ function demoStore(){
     { id:"d3", list:"visitar", title:"Ejemplo: un museo nuevo", zona:"Recoleta", tags:["Día de lluvia"], price:2, done:true, rating:4, doneAt:Date.now()-2e8, memory:"Nos quedamos dos horas en la sala de arriba.", createdAt:Date.now()-9e8, lat:-34.5837, lng:-58.3931 },
     { id:"d4", list:"comer", title:"Ejemplo: café de especialidad", zona:"Palermo", tags:[], price:2, done:false, createdAt:Date.now()-3e8 }
   ];
-  let onItems = ()=>{};
-  const emit = ()=>onItems(items.map(i=>({...i})));
+  const me = { name:"Demo" }, ana = { name:"Ana" };
+  const groups = {
+    demo:{ name:"Lista de prueba", members:["demo","ana"], memberInfo:{ demo:me, ana }, inviteCode:"DEMO42", private:false },
+    mia:{ name:"Mi lista", members:["demo"], memberInfo:{ demo:me }, inviteCode:"", private:true }
+  };
+  const data = { demo:{ items, plans:[{ id:"p1", title:"Ejemplo: sábado en Palermo", date:"", stops:["d4","d2"], note:"Café y después picnic", createdAt:Date.now()-1e8, updatedAt:Date.now()-1e8 }] },
+    mia:{ items:[{ id:"m1", list:"visitar", title:"Ejemplo: algo solo para mí", zona:"San Telmo", tags:[], price:0, done:false, createdAt:Date.now()-1e8 }], plans:[] } };
+  let cur = "demo", onItems = ()=>{}, onPlans = ()=>{}, onGroup = ()=>{};
+  const D = (gid = cur) => data[gid] || (data[gid] = { items:[], plans:[] });
+  const emit = ()=>{ if(!groups[cur]) return; onGroup({ ...groups[cur] }); onItems(D().items.map(i=>({...i}))); onPlans(D().plans.map(p=>({...p, stops:[...p.stops]}))); };
+  const put = (arr, id, d)=>{ const i = arr.findIndex(x=>x.id===id); if(i>=0) arr[i] = {...arr[i], ...d}; else arr.push({ id, ...d }); };
   return {
     start(onUser){ setTimeout(()=>onUser({ uid:"demo", name:"Demo", photo:"" }), 200); },
     async login(){}, async logout(){ location.hash=""; location.reload(); }, stop(){},
-    async myGroupId(){ return "demo"; },
-    async createGroup(){ return "demo"; }, async joinGroup(){ return "demo"; }, async newCode(){},
-    watch(gid, onGroup, oi){ onItems = oi; onGroup({ name:"Lista de prueba", members:["demo"], memberInfo:{ demo:{ name:"Demo" } }, inviteCode:"DEMO42" }); emit(); },
+    async myGroupId(){ return cur; },
+    async myLists(){ return Object.entries(groups).map(([id,g])=>({ id, ...g })); },
+    setCurrent(gid){ cur = gid; },
+    async createGroup(name, priv){ const id = "g"+Math.random().toString(36).slice(2,7); groups[id] = { name, members:["demo"], memberInfo:{ demo:me }, inviteCode: priv ? "" : genCode(), private:!!priv }; cur = id; return id; },
+    async joinGroup(){ throw { code:"not-found" }; },
+    async newCode(){ groups[cur].inviteCode = genCode(); emit(); },
+    async rename(name){ groups[cur].name = name; emit(); },
+    async makeShared(){ Object.assign(groups[cur], { private:false, inviteCode:genCode() }); emit(); },
+    async makePrivate(){ Object.assign(groups[cur], { private:true, inviteCode:"" }); emit(); },
+    async leave(){ delete groups[cur]; },
+    async deleteGroup(){ delete groups[cur]; delete data[cur]; },
+    watch(gid, og, oi, op){ cur = gid; onGroup = og; onItems = oi; onPlans = op; if(!groups[gid]) return og(null); emit(); },
     newId(){ return "d"+Math.random().toString(36).slice(2,9); },
-    save(id, data){ const i = items.findIndex(x=>x.id===id); if(i>=0) items[i] = {...items[i], ...data}; else items.push({ id, ...data }); emit(); },
-    remove(id){ items = items.filter(x=>x.id!==id); photos.delete(id); emit(); },
+    save(id, d, gid){ put(D(gid || cur).items, id, d); emit(); },
+    remove(id){ D().items = D().items.filter(x=>x.id!==id); photos.delete(id); emit(); },
+    newPlanId(){ return "p"+Math.random().toString(36).slice(2,9); },
+    savePlan(id, d){ put(D().plans, id, d); emit(); },
+    removePlan(id){ D().plans = D().plans.filter(x=>x.id!==id); emit(); },
     async getPhoto(id){ return photos.get(id) || ""; },
     async setPhoto(id, data){ photos.set(id, data); },
     delPhoto(id){ photos.delete(id); }
@@ -211,21 +278,59 @@ function loginError(e){
 async function onUser(u){
   if(!u){ state.me = null; show("vLogin"); return; }
   state.me = u;
+  refreshLists();
   try{
     const gid = await store.myGroupId();
     if(gid) return enterGroup(gid);
   }catch(e){ console.error(e); }
-  $("helloName").textContent = u.name ? ", " + u.name.split(" ")[0] : "";
+  goToAnotherList(null);
+}
+
+async function refreshLists(){
+  try{ state.lists = sortLists(await store.myLists()); }catch(e){ console.error(e); }
+  return state.lists;
+}
+const sortLists = ls => ls.slice().sort((a,b)=>(a.private?1:0)-(b.private?1:0) || String(a.name).localeCompare(String(b.name),"es"));
+
+/* si la lista abierta ya no está (te fuiste, la borraron), abre otra tuya o la pantalla de inicio */
+async function goToAnotherList(badGid){
+  if(goToAnotherList.busy) return;
+  goToAnotherList.busy = true;
+  store.stop();
+  const lists = (await refreshLists()).filter(l=>l.id!==badGid);
+  goToAnotherList.busy = false;
+  state.lists = lists;
+  if(lists.length){ state.view = "pend"; return enterGroup(lists[0].id); }
+  state.gid = null; state.group = null; state.items = []; state.plans = [];
+  $("helloName").textContent = state.me && state.me.name ? ", " + state.me.name.split(" ")[0] : "";
   show("vGroup");
 }
 
 function enterGroup(gid){
-  state.gid = gid; state.loaded = false;
+  if(state.gid !== gid){
+    state.items = []; state.plans = []; state.group = null; state.zona = state.tag = state.q = ""; $("q").value = "";
+    state.mapFitted = false; photoCache.clear(); banner("");
+  }
+  state.gid = gid; state.loaded = false; state.plansLoaded = false;
+  store.setCurrent(gid);
   show("vMain"); render();
   store.watch(gid,
-    g => { if(!g || !(g.members||[]).includes(state.me.uid)){ store.stop(); show("vGroup"); return; } state.group = g; renderHeader(); render(); },
-    items => { state.items = items; state.loaded = true; render(); maybeOpenShare(); },
-    e => { console.error(e); if(e && e.code==="permission-denied"){ store.stop(); $("helloName").textContent = ""; show("vGroup"); } else banner("Se cortó la conexión con la lista. Volvé a abrir la app."); });
+    g => {
+      if(state.gid !== gid) return;
+      if(!g || !(g.members||[]).includes(state.me.uid)){ goToAnotherList(gid); return; }
+      state.group = g;
+      const l = state.lists.find(x=>x.id===gid); if(l) Object.assign(l, g); else state.lists = sortLists(state.lists.concat({ id:gid, ...g }));
+      renderHeader(); render();
+    },
+    items => { if(state.gid !== gid) return; state.items = items; state.loaded = true; render(); maybeOpenShare(); },
+    plans => { if(state.gid !== gid) return; state.plans = plans; state.plansLoaded = true; if(state.view==="planes") render(); },
+    e => { console.error(e); if(state.gid !== gid) return; if(e && e.code==="permission-denied") goToAnotherList(gid); else banner("Se cortó la conexión con la lista. Volvé a abrir la app."); });
+}
+
+/* borra un ítem y lo saca de los planes donde estaba */
+function removeItem(id){
+  store.remove(id);
+  state.plans.filter(p=>(p.stops||[]).includes(id)).forEach(p=>store.savePlan(p.id, { stops:p.stops.filter(x=>x!==id), updatedAt:Date.now() }));
 }
 
 function maybeOpenShare(){
@@ -293,16 +398,20 @@ function itemMeta(i, opts={}){
 function render(){
   $("ver").textContent = VERSION;
   const pend = state.items.filter(i=>!i.done).length, done = state.items.filter(i=>i.done).length;
-  $("listName").textContent = state.group?.name || "Nuestra lista";
-  $("summary").textContent = state.loaded ? `${pend} pendiente${pend===1?"":"s"} · ${done} hecho${done===1?"":"s"}` : "Cargando…";
+  $("listName").textContent = state.group?.name || (state.loaded ? "Lista" : "");
+  const who = !state.group ? "" : state.group.private ? "🔒 Privada · " : (state.group.members||[]).length > 1 ? `👥 ${(state.group.members||[]).length} personas · ` : "";
+  $("summary").textContent = state.loaded ? `${who}${pend} pendiente${pend===1?"":"s"} · ${done} hecho${done===1?"":"s"}` : "Cargando…";
+  $("addLbl").textContent = state.view==="planes" ? "Nuevo plan" : "Agregar";
 
   document.querySelectorAll(".seg [data-view]").forEach(b=>b.setAttribute("aria-pressed", b.dataset.view===state.view));
   const listView = state.view==="pend" || state.view==="done";
   $("tabs").hidden = $("tools").hidden = $("list").hidden = !listView;
   $("zonas").hidden = state.view!=="zonas";
   $("mapWrap").hidden = state.view!=="mapa";
+  $("planes").hidden = state.view!=="planes";
   if(state.view==="zonas") return renderZonas();
   if(state.view==="mapa") return renderMap();
+  if(state.view==="planes") return renderPlanes();
 
   const showDone = state.view==="done", searching = !!state.q;
   $("tabs").innerHTML = Object.entries(LISTS).map(([k,v])=>{
@@ -314,7 +423,7 @@ function render(){
   const rows = state.items.filter(i=>(searching || i.list===state.tab) && !!i.done===showDone && matches(i))
     .sort((a,b)=> showDone ? (b.doneAt||0)-(a.doneAt||0) : (b.createdAt||0)-(a.createdAt||0));
   const rn = $("resnote"); rn.hidden = !searching;
-  if(searching) rn.textContent = `${rows.length} resultado${rows.length===1?"":"s"} en ${showDone?"hechos":"pendientes"} de todas las listas`;
+  if(searching) rn.textContent = `${rows.length} resultado${rows.length===1?"":"s"} en ${showDone?"hechos":"pendientes"} de esta lista`;
 
   const list = $("list");
   if(!state.loaded){ list.innerHTML = `<li class="empty"><b>Cargando la lista…</b>Un segundo.</li>`; return; }
@@ -451,6 +560,186 @@ function sinUbicarSheet(){
   $("sheet").querySelectorAll("[data-sin]").forEach(b=>b.onclick=()=>{ const it = state.items.find(x=>x.id===b.dataset.sin); if(it) itemForm(it, { openMap:true }); });
 }
 
+/* ---------- planes (itinerarios) ---------- */
+const todayStr = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset()*6e4).toISOString().slice(0,10); };
+const fmtDay = d => new Date(d+"T12:00:00").toLocaleDateString("es-AR",{ weekday:"short", day:"numeric", month:"short" });
+function sortedPlans(){
+  const t = todayStr();
+  const rank = p => !p.date ? 1 : p.date >= t ? 0 : 2;   // próximos, sin fecha, pasados
+  return state.plans.slice().sort((a,b)=> rank(a)-rank(b)
+    || (rank(a)===0 ? a.date.localeCompare(b.date) : rank(a)===2 ? b.date.localeCompare(a.date) : 0)
+    || (b.updatedAt||0)-(a.updatedAt||0));
+}
+function renderPlanes(){
+  const box = $("planes");
+  if(!state.plansLoaded){ box.innerHTML = `<div class="empty"><b>Cargando…</b></div>`; return; }
+  if(!state.plans.length){
+    box.innerHTML = `<div class="empty"><b>Todavía no hay planes</b>Armá el recorrido de un día: elegí lugares de la lista, ponelos en orden y miralos en el mapa.</div>
+      <button type="button" class="btn primary" data-newplan>+ Nuevo plan</button>`;
+    return;
+  }
+  const t = todayStr();
+  box.innerHTML = sortedPlans().map(p=>{
+    const stops = (p.stops||[]).map(id=>state.items.find(i=>i.id===id)).filter(Boolean);
+    const when = p.date ? (p.date===t ? "Hoy" : fmtDay(p.date)) : "Sin fecha";
+    return `<button type="button" class="pcard" data-plan="${esc(p.id)}">
+      <span class="pd ${p.date && p.date<t ? "past" : ""}">${esc(when)} · ${stops.length} parada${stops.length===1?"":"s"}</span>
+      <b>${esc(p.title)}</b>
+      ${stops.length ? `<ol>${stops.slice(0,4).map(i=>`<li>${esc(i.title)}</li>`).join("")}${stops.length>4?`<li>y ${stops.length-4} más…</li>`:""}</ol>` : ""}
+    </button>`;
+  }).join("");
+}
+
+/* link de Google Maps con el recorrido (Maps acepta hasta 9 paradas intermedias) */
+function routeUrl(pts){
+  if(!pts.length) return "";
+  if(pts.length===1) return `https://www.google.com/maps/search/?api=1&query=${pts[0].lat},${pts[0].lng}`;
+  const ll = i => `${i.lat},${i.lng}`, use = pts.slice(0, 11);
+  return `https://www.google.com/maps/dir/?api=1&origin=${ll(use[0])}&destination=${ll(use[use.length-1])}`
+    + (use.length>2 ? `&waypoints=${encodeURIComponent(use.slice(1,-1).map(ll).join("|"))}` : "");
+}
+
+function planSheet(plan, preStop){
+  let stops = (plan ? plan.stops||[] : []).slice();
+  if(preStop && !stops.includes(preStop)) stops.push(preStop);
+  let layer = null;
+  openSheet(`
+    <h2>${plan ? "Plan" : "Nuevo plan"}</h2>
+    <label>Nombre<input id="plTitle" type="text" maxlength="80" value="${esc(plan ? plan.title : "")}" placeholder="Ej.: Sábado en San Telmo"></label>
+    <label>Día (opcional)<input id="plDate" type="date" value="${esc(plan && plan.date || "")}"></label>
+    <div class="lbl">Paradas, en orden
+      <ol class="stops" id="plStops"></ol>
+      <button type="button" class="linkbtn" id="plAdd">+ Sumar una parada de la lista</button>
+      <div id="plPick" hidden style="display:flex;flex-direction:column;gap:8px">
+        <input id="plQ" type="search" placeholder="Buscar en la lista" aria-label="Buscar parada">
+        <div class="picker" id="plPickList"></div>
+      </div>
+    </div>
+    <div id="plMapBox" hidden style="display:flex;flex-direction:column;gap:8px">
+      <div id="plMap" class="map small"></div>
+      <div class="links" id="plRoute"></div>
+    </div>
+    <label>Nota<textarea id="plNote" maxlength="500" placeholder="Horarios, qué llevar, reservas…">${esc(plan && plan.note || "")}</textarea></label>
+    <div class="err" id="plErr" hidden></div>
+    <div class="row"><button type="button" class="btn ghost" id="plCancel">Cancelar</button><button type="button" class="btn primary" id="plSave">${plan?"Guardar":"Crear plan"}</button></div>
+    ${plan ? `<div class="row" id="plDelRow"><button type="button" class="btn danger" id="plDel">Borrar plan</button></div>` : ""}`);
+
+  const byId = id => state.items.find(i=>i.id===id);
+  const paintMap = ()=>{
+    const pts = stops.map(byId).filter(i=>i && hasLoc(i));
+    $("plMapBox").hidden = !pts.length;
+    if(!pts.length) return;
+    const url = routeUrl(pts);
+    $("plRoute").innerHTML = `<a href="${esc(url)}" target="_blank" rel="noopener">${pts.length>1?"Abrir el recorrido en Google Maps":"Ver en Google Maps"} ↗</a>`
+      + (pts.length>11 ? `<span class="hint">Maps muestra las primeras 11 paradas.</span>` : "")
+      + (pts.length < stops.length ? `<span class="hint">${stops.length-pts.length} sin ubicar: no están en el mapa.</span>` : "");
+    if(!window.L){ $("plMap").hidden = true; return; }
+    if(!sheetMap){ sheetMap = L.map("plMap").setView(BA, 12); tiles().addTo(sheetMap); layer = L.layerGroup().addTo(sheetMap); }
+    layer.clearLayers();
+    const line = [];
+    stops.forEach((id, n)=>{
+      const i = byId(id); if(!i || !hasLoc(i)) return;
+      line.push([i.lat, i.lng]);
+      L.marker([i.lat, i.lng], { icon:L.divIcon({ className:"stopnum", html:`<span>${n+1}</span>`, iconSize:[28,28], iconAnchor:[14,14] }) })
+        .bindPopup(`<div class="title">${n+1}. ${esc(i.title)}</div>${i.zona?`<div class="note">${esc(i.zona)}</div>`:""}`).addTo(layer);
+    });
+    if(line.length>1) L.polyline(line, { color:listColor("visitar"), weight:3, dashArray:"6 8", opacity:.85 }).addTo(layer);
+    setTimeout(()=>{ if(!sheetMap) return; sheetMap.invalidateSize(); sheetMap.fitBounds(L.latLngBounds(line).pad(.25), { maxZoom:15 }); }, 80);
+  };
+  const paintStops = ()=>{
+    $("plStops").innerHTML = stops.length ? stops.map((id, n)=>{
+      const i = byId(id);
+      const sub = i ? [LISTS[i.list]?.one, i.zona, hasLoc(i) ? "" : "sin ubicar", i.done ? "ya lo hicieron" : ""].filter(Boolean).join(" · ") : "Lo borraron de la lista";
+      return `<li class="stop ${i?"":"gone"}"><span class="num">${n+1}</span>
+        <div class="body"><div class="title">${esc(i ? i.title : "Parada borrada")}</div><div class="note">${esc(sub)}</div></div>
+        <div class="sbtns"><button type="button" data-up="${n}" aria-label="Subir" ${n===0?"disabled":""}>↑</button><button type="button" data-down="${n}" aria-label="Bajar" ${n===stops.length-1?"disabled":""}>↓</button><button type="button" data-rm="${n}" aria-label="Quitar">✕</button></div></li>`;
+    }).join("") : `<li class="hint">Todavía no hay paradas. Sumá lugares de la lista.</li>`;
+    $("plAdd").hidden = stops.length >= 30;
+    paintMap();
+    if(!$("plPick").hidden) paintPick();
+  };
+  const paintPick = ()=>{
+    const q = norm($("plQ").value);
+    const cand = state.items.filter(i=>!stops.includes(i.id) && (!q || norm([i.title, i.zona, i.note].join(" ")).includes(q)))
+      .sort((a,b)=>(a.done?1:0)-(b.done?1:0) || (b.createdAt||0)-(a.createdAt||0)).slice(0, 60);
+    $("plPickList").innerHTML = cand.length ? cand.map(i=>`<button type="button" class="mini ${i.done?"is-done":""}" data-pk="${esc(i.id)}"><span class="title">${esc(i.title)}</span><span class="note">${esc([LISTS[i.list]?.one, i.zona, hasLoc(i)?"":"sin ubicar"].filter(Boolean).join(" · "))}</span></button>`).join("")
+      : `<span class="hint">${state.items.length ? "No hay más para sumar con esa búsqueda." : "La lista está vacía: primero agregá lugares."}</span>`;
+  };
+  $("plStops").onclick = e=>{
+    const b = e.target.closest("button"); if(!b) return;
+    const n = +(b.dataset.up ?? b.dataset.down ?? b.dataset.rm);
+    if(b.dataset.up!=null && n>0) [stops[n-1], stops[n]] = [stops[n], stops[n-1]];
+    else if(b.dataset.down!=null && n<stops.length-1) [stops[n+1], stops[n]] = [stops[n], stops[n+1]];
+    else if(b.dataset.rm!=null) stops.splice(n, 1);
+    paintStops();
+  };
+  $("plAdd").onclick = ()=>{ const open = $("plPick").hidden; $("plPick").hidden = !open; $("plAdd").textContent = open ? "Listo" : "+ Sumar una parada de la lista"; if(open) paintPick(); };
+  $("plQ").addEventListener("input", paintPick);
+  $("plPickList").onclick = e=>{ const b = e.target.closest("[data-pk]"); if(b && stops.length<30){ stops.push(b.dataset.pk); paintStops(); } };
+  $("plCancel").onclick = closeSheet;
+  $("plSave").onclick = ()=>{
+    const title = $("plTitle").value.trim() || ($("plDate").value ? "Plan del " + fmtDay($("plDate").value) : "");
+    if(!title){ $("plErr").hidden = false; $("plErr").textContent = "Ponele un nombre o un día."; return; }
+    const data = { title, date:$("plDate").value || "", note:$("plNote").value.trim(), stops:stops.filter(byId), updatedAt:Date.now() };
+    if(plan) store.savePlan(plan.id, data);
+    else store.savePlan(store.newPlanId(), { ...data, createdAt:Date.now(), createdBy:state.me.uid });
+    closeSheet(); toast(plan ? "Plan guardado" : "Plan creado");
+    if(!plan){ state.view = "planes"; render(); }
+  };
+  if(plan) $("plDel").onclick = ()=>{
+    $("plDelRow").innerHTML = `<button type="button" class="btn ghost" id="plNo">No, dejarlo</button><button type="button" class="btn danger" id="plYes">Sí, borrar el plan</button>`;
+    $("plNo").onclick = ()=>planSheet(plan);
+    $("plYes").onclick = ()=>{ store.removePlan(plan.id); closeSheet(); toast("Plan borrado"); };
+  };
+  paintStops();
+}
+
+/* ---------- listas: cambiar, crear, sumarse ---------- */
+function listsSheet(){
+  let priv = false;
+  const draw = ()=>{
+    openSheet(`
+      <h2>Tus listas</h2>
+      <div style="display:flex;flex-direction:column;gap:6px">${state.lists.map(l=>{
+        const n = (l.members||[]).length;
+        return `<button type="button" class="lrow" data-gl="${esc(l.id)}" aria-current="${l.id===state.gid}">
+          <span class="ic" aria-hidden="true">${l.private?"🔒":"👥"}</span>
+          <span style="min-width:0"><span class="t">${esc(l.name||"Lista")}</span><span class="s">${l.private ? "Privada · solo vos" : n>1 ? `Compartida · ${n} personas` : "Compartida · todavía solo vos"}${l.id===state.gid?" · abierta":""}</span></span></button>`;
+      }).join("") || `<span class="hint">Cargando…</span>`}</div>
+      <div class="sec">Nueva lista</div>
+      <label>Nombre<input id="nlName" type="text" maxlength="40" placeholder="Ej.: Con amigos, Mis cosas"></label>
+      <div class="pills" role="group" aria-label="Quién la ve"><button type="button" class="pill" data-np="0" aria-pressed="${!priv}">👥 Compartida</button><button type="button" class="pill" data-np="1" aria-pressed="${priv}">🔒 Privada, solo yo</button></div>
+      <span class="hint" id="nlHint">${priv ? "Solo vos la ves. Si después querés, la podés compartir." : `Se suma gente con un código (hasta ${MAX_MEMBERS} personas).`}</span>
+      <button type="button" class="btn primary" id="nlCreate">Crear lista</button>
+      <div class="sec">Sumarme a otra lista</div>
+      <div class="addtag"><input id="nlCode" type="text" maxlength="8" autocapitalize="characters" autocomplete="off" placeholder="Código, ej.: K7M2QX" aria-label="Código de invitación" style="text-transform:uppercase;letter-spacing:.12em"><button type="button" id="nlJoin">Unirme</button></div>
+      <div class="err" id="nlErr" hidden></div>
+      <div class="row"><button type="button" class="btn ghost" id="nlClose">Cerrar</button></div>`);
+    const err = m => { $("nlErr").hidden = false; $("nlErr").textContent = m; };
+    $("sheet").querySelectorAll("[data-gl]").forEach(b=>b.onclick=()=>{ closeSheet(); if(b.dataset.gl!==state.gid){ state.view = state.view==="planes" ? "planes" : "pend"; enterGroup(b.dataset.gl); } });
+    $("sheet").querySelectorAll("[data-np]").forEach(b=>b.onclick=()=>{ priv = b.dataset.np==="1"; const name = $("nlName").value; draw(); $("nlName").value = name; });
+    $("nlCreate").onclick = async ()=>{
+      const name = $("nlName").value.trim();
+      if(!name) return err("Ponele un nombre a la lista.");
+      $("nlCreate").disabled = true;
+      try{ const gid = await store.createGroup(name, priv); closeSheet(); state.view = "pend"; enterGroup(gid); refreshLists(); toast(priv ? "Lista privada creada" : "Lista creada. Tocá tu foto arriba para invitar."); }
+      catch(e){ console.error(e); $("nlCreate").disabled = false; err("No se pudo crear la lista. Revisá la conexión."); }
+    };
+    $("nlJoin").onclick = async ()=>{
+      const code = $("nlCode").value.trim().toUpperCase().replace(/[^A-Z0-9]/g,"");
+      if(code.length < 6) return err("El código tiene 6 letras o números.");
+      $("nlJoin").disabled = true;
+      try{ const gid = await store.joinGroup(code); closeSheet(); state.view = "pend"; enterGroup(gid); refreshLists(); }
+      catch(e){ console.error(e); $("nlJoin").disabled = false; err(joinErr(e)); }
+    };
+    $("nlClose").onclick = closeSheet;
+  };
+  draw();
+  refreshLists().then(()=>{ if($("nlClose") && !$("nlName").value) draw(); });
+}
+const joinErr = e => e && e.code==="not-found" ? "Ese código no existe. Revisá que esté bien escrito."
+  : e && e.code==="full" ? `No se pudo: esa lista ya tiene ${MAX_MEMBERS} personas o el código cambió.` : "No se pudo unir a la lista. Probá de nuevo.";
+
 /* ---------- hojas ---------- */
 let sheetMap = null;
 function openSheet(html){
@@ -470,6 +759,7 @@ function itemForm(item, pre={}){
   openSheet(`
     <h2>${item?"Editar":pre.fromShare?"Guardar lo compartido":"Agregar"}</h2>
     <form id="itemForm" style="display:flex;flex-direction:column;gap:14px">
+      ${!item && state.lists.length>1 ? `<label>Guardar en<select id="fGid">${state.lists.map(l=>`<option value="${esc(l.id)}" ${l.id===state.gid?"selected":""}>${l.private?"🔒 ":""}${esc(l.name||"Lista")}</option>`).join("")}</select></label>` : ""}
       <div class="pills" role="group" aria-label="Lista">${Object.entries(LISTS).map(([k,v])=>`<button type="button" class="pill" data-list="${k}" aria-pressed="${list===k}"><span class="dot" style="background:${listColor(k)}"></span>${v.one}</button>`).join("")}</div>
       <div class="lbl capbox">
         <button type="button" class="linkbtn" id="capOpen" ${pre.fromShare?"hidden":""}>📋 Completar con la descripción del reel</button>
@@ -500,6 +790,9 @@ function itemForm(item, pre={}){
       <div class="lbl">Etiquetas
         <div class="pills" id="tagPills"></div>
         <div class="addtag"><input id="fNewTag" type="text" maxlength="30" placeholder="Otra etiqueta…" aria-label="Nueva etiqueta"><button type="button" id="fAddTag">Sumar</button></div></div>
+      ${item ? `<div class="lbl">Planes
+        <span class="hint">${(()=>{ const inP = state.plans.filter(p=>(p.stops||[]).includes(item.id)); return inP.length ? "Está en: " + inP.map(p=>esc(p.title)).join(", ") : "No está en ningún plan."; })()}</span>
+        <div class="row" style="gap:8px">${state.plans.some(p=>!(p.stops||[]).includes(item.id)) ? `<select id="fPlan" aria-label="Sumar a un plan"><option value="">Sumar a un plan…</option>${sortedPlans().filter(p=>!(p.stops||[]).includes(item.id)).map(p=>`<option value="${esc(p.id)}">${esc(p.title)}</option>`).join("")}</select>` : ""}<button type="button" class="btn ghost" id="fNewPlan">Nuevo plan con esto</button></div></div>` : ""}
       ${item && item.done ? `<button type="button" class="linkbtn" id="fMem">Cambiar fecha, puntaje, foto o recuerdo →</button>` : ""}
       <div class="err" id="fErr" hidden></div>
       <div class="row"><button type="button" class="btn ghost" id="fCancel">Cancelar</button><button type="submit" class="btn primary">${item?"Guardar":"Agregar"}</button></div>
@@ -612,11 +905,18 @@ function itemForm(item, pre={}){
 
   /* acciones */
   $("fCancel").onclick = closeSheet;
+  if($("fPlan")) $("fPlan").onchange = e=>{
+    const p = state.plans.find(x=>x.id===e.target.value); if(!p) return;
+    if((p.stops||[]).length >= 30) return toast("Ese plan ya tiene 30 paradas.");
+    store.savePlan(p.id, { stops:(p.stops||[]).concat(item.id), updatedAt:Date.now() });
+    toast("Sumado a " + p.title); closeSheet();
+  };
+  if($("fNewPlan")) $("fNewPlan").onclick = ()=>planSheet(null, item.id);
   if(item && item.done) $("fMem").onclick = ()=>doneSheet(item);
   if(item) $("fDel").onclick = ()=>{
     $("delRow").innerHTML = `<button type="button" class="btn ghost" id="dNo">No, dejarlo</button><button type="button" class="btn danger" id="dYes">Sí, borrar</button>`;
     $("dNo").onclick = ()=>itemForm(item);
-    $("dYes").onclick = ()=>{ store.remove(item.id); closeSheet(); toast("Borrado"); };
+    $("dYes").onclick = ()=>{ removeItem(item.id); closeSheet(); toast("Borrado"); };
   };
   $("itemForm").onsubmit = e=>{
     e.preventDefault();
@@ -627,13 +927,15 @@ function itemForm(item, pre={}){
     let zona = $("fZonaIn").value.trim();
     const same = zonas.find(z=>norm(z)===norm(zona)); if(same) zona = same;
     const data = { list, title, note:$("fNote").value.trim(), zona, tags, link, maps, price, lat:loc?loc.lat:null, lng:loc?loc.lng:null };
+    const gid = $("fGid") ? $("fGid").value : state.gid;
     if(item) store.save(item.id, data);
     else {
-      store.save(store.newId(), { ...data, done:false, rating:0, doneAt:0, memory:"", hasPhoto:false, createdAt:Date.now(), createdBy:state.me.uid });
-      state.tab = list; if(state.view==="done") state.view = "pend";
+      store.save(store.newId(), { ...data, done:false, rating:0, doneAt:0, memory:"", hasPhoto:false, createdAt:Date.now(), createdBy:state.me.uid }, gid);
+      if(gid===state.gid){ state.tab = list; if(state.view==="done" || state.view==="planes") state.view = "pend"; }
     }
     state.mapFitted = false;
-    closeSheet(); render(); toast(item ? "Guardado" : "Agregado a " + LISTS[list].label);
+    const other = gid!==state.gid && state.lists.find(l=>l.id===gid);
+    closeSheet(); render(); toast(item ? "Guardado" : other ? `Agregado a “${other.name}”` : "Agregado a " + LISTS[list].label);
   };
 }
 
@@ -749,32 +1051,64 @@ function pickSheet(){
 function menuSheet(){
   const g = state.group || {}, info = g.memberInfo || {};
   const standalone = matchMedia("(display-mode: standalone)").matches;
+  const n = (g.members||[]).length, alone = n <= 1, full = n >= MAX_MEMBERS;
   openSheet(`
-    <h2>${esc(g.name || "Nuestra lista")}</h2>
-    <div class="members">${(g.members||[]).map(id=>{ const m = info[id]||{}; return `<div><span class="av">${m.photo?`<img src="${esc(m.photo)}" alt="" referrerpolicy="no-referrer">`:esc(initial(m.name))}</span><span>${esc(m.name||"Sin nombre")}${id===state.me.uid?" (vos)":""}</span></div>`; }).join("")}</div>
-    <div class="lbl">Código para sumar a alguien
-      <div class="code" id="codeTxt">${esc(g.inviteCode||"—")}</div>
-      <span class="hint">La otra persona instala la app, entra con su Google, toca “Tengo un código” y lo escribe.</span></div>
-    <div class="row"><button type="button" class="btn ghost" id="mCopy">Copiar código</button>${navigator.share?`<button type="button" class="btn ghost" id="mShare">Enviar invitación</button>`:""}</div>
-    <button type="button" class="linkbtn" id="mNew">Cambiar el código (el anterior deja de servir)</button>
+    <h2>${esc(g.name || "Lista")}</h2>
+    <div id="mRenameBox"><button type="button" class="linkbtn" id="mRename">Cambiar el nombre</button></div>
+    ${g.private ? `
+      <div class="lnote">🔒 <b>Lista privada.</b> Solo la ves vos: nadie se puede sumar.</div>
+      <button type="button" class="btn ghost" id="mShareList">Compartir esta lista con alguien</button>`
+    : `
+      <div class="members">${(g.members||[]).map(id=>{ const m = info[id]||{}; return `<div><span class="av">${m.photo?`<img src="${esc(m.photo)}" alt="" referrerpolicy="no-referrer">`:esc(initial(m.name))}</span><span>${esc(m.name||"Sin nombre")}${id===state.me.uid?" (vos)":""}</span></div>`; }).join("")}</div>
+      ${full ? `<div class="lnote">La lista llegó al máximo de ${MAX_MEMBERS} personas.</div>` : `
+      <div class="lbl">Código para sumar a alguien
+        <div class="code" id="codeTxt">${esc(g.inviteCode||"—")}</div>
+        <span class="hint">La otra persona instala la app, entra con su Google y escribe el código (en “Tengo un código”, o tocando el nombre de la lista → “Sumarme a otra lista”). Hasta ${MAX_MEMBERS} personas.</span></div>
+      <div class="row"><button type="button" class="btn ghost" id="mCopy">Copiar código</button>${navigator.share?`<button type="button" class="btn ghost" id="mShare">Enviar invitación</button>`:""}</div>
+      <button type="button" class="linkbtn" id="mNew">Cambiar el código (el anterior deja de servir)</button>`}
+      ${alone ? `<button type="button" class="linkbtn" id="mPriv">Hacerla privada (solo vos)</button>` : ""}`}
     ${state.installEvt && !standalone ? `<button type="button" class="btn primary" id="mInstall">Instalar la app</button>` : ""}
-    <div class="row"><button type="button" class="btn ghost" id="mClose">Cerrar</button><button type="button" class="btn danger" id="mOut">Cerrar sesión</button></div>
+    <div class="row" id="mDangerRow">${alone
+      ? `<button type="button" class="btn danger" id="mDelList">Borrar esta lista</button>`
+      : `<button type="button" class="btn danger" id="mLeave">Salir de esta lista</button>`}</div>
+    <div class="row"><button type="button" class="btn ghost" id="mClose">Cerrar</button><button type="button" class="btn ghost" id="mOut">Cerrar sesión</button></div>
     <span class="hint" style="text-align:center">Versión ${VERSION} · ${esc(state.me.name)}</span>`);
-  const invite = ()=>`Sumate a nuestra lista en ¿Qué hacemos hoy?\n${location.origin + location.pathname}\nCódigo: ${g.inviteCode}`;
-  $("mCopy").onclick = async ()=>{ try{ await navigator.clipboard.writeText(g.inviteCode); toast("Código copiado"); }catch{ getSelection().selectAllChildren($("codeTxt")); } };
+  const fail = m => ()=>toast(m);
+  const invite = ()=>`Sumate a la lista “${g.name}” en ¿Qué hacemos hoy?\n${location.origin + location.pathname}\nCódigo: ${g.inviteCode}`;
+  $("mRename").onclick = ()=>{
+    $("mRenameBox").innerHTML = `<div class="addtag"><input id="mName" type="text" maxlength="40" value="${esc(g.name||"")}" aria-label="Nombre de la lista"><button type="button" id="mNameOk">Guardar</button></div>`;
+    $("mName").focus();
+    $("mNameOk").onclick = async ()=>{ const v = $("mName").value.trim(); if(!v) return; try{ await store.rename(v); toast("Nombre cambiado"); menuSheet(); }catch{ toast("No se pudo cambiar el nombre."); } };
+  };
+  if($("mCopy")) $("mCopy").onclick = async ()=>{ try{ await navigator.clipboard.writeText(g.inviteCode); toast("Código copiado"); }catch{ getSelection().selectAllChildren($("codeTxt")); } };
   if($("mShare")) $("mShare").onclick = ()=>navigator.share({ text:invite() }).catch(()=>{});
-  $("mNew").onclick = async ()=>{ try{ await store.newCode(); toast("Código nuevo listo"); closeSheet(); }catch{ toast("No se pudo cambiar el código. Probá con conexión."); } };
+  if($("mNew")) $("mNew").onclick = async ()=>{ try{ await store.newCode(); toast("Código nuevo listo"); menuSheet(); }catch{ toast("No se pudo cambiar el código. Probá con conexión."); } };
+  if($("mShareList")) $("mShareList").onclick = async ()=>{ try{ await store.makeShared(); toast("Listo: pasale el código a quien quieras sumar"); menuSheet(); }catch(e){ console.error(e); fail("No se pudo. Probá con conexión.")(); } };
+  if($("mPriv")) $("mPriv").onclick = async ()=>{ try{ await store.makePrivate(); toast("Ahora es privada"); menuSheet(); }catch(e){ console.error(e); fail("No se pudo. Probá con conexión.")(); } };
+  const confirmRow = (msg, yes, act)=>{
+    $("mDangerRow").innerHTML = `<p class="hint" style="flex-basis:100%;margin:0">${msg}</p><button type="button" class="btn ghost" id="mNo">No</button><button type="button" class="btn danger" id="mYes">${yes}</button>`;
+    $("mNo").onclick = menuSheet;
+    $("mYes").onclick = async ()=>{ $("mYes").disabled = true; try{ await act(); }catch(e){ console.error(e); toast("No se pudo. Probá con conexión."); menuSheet(); } };
+  };
+  if($("mLeave")) $("mLeave").onclick = ()=>confirmRow("Vas a dejar de ver esta lista y sus planes. Los demás la siguen teniendo. Para volver, te tienen que pasar el código.", "Sí, salir", async ()=>{
+    const gid = state.gid; await store.leave(); closeSheet(); toast("Saliste de la lista"); goToAnotherList(gid);
+  });
+  if($("mDelList")) $("mDelList").onclick = ()=>confirmRow(`Se borran ${state.items.length} cosa${state.items.length===1?"":"s"}, ${state.plans.length} plan${state.plans.length===1?"":"es"} y las fotos de esta lista. No se puede deshacer.`, "Sí, borrar todo", async ()=>{
+    const gid = state.gid; $("mYes").textContent = "Borrando…"; await store.deleteGroup(); closeSheet(); toast("Lista borrada"); goToAnotherList(gid);
+  });
   if($("mInstall")) $("mInstall").onclick = async ()=>{ state.installEvt.prompt(); await state.installEvt.userChoice; state.installEvt = null; closeSheet(); };
   $("mClose").onclick = closeSheet;
-  $("mOut").onclick = async ()=>{ closeSheet(); state.items = []; state.group = null; state.gid = null; await store.logout(); };
+  $("mOut").onclick = async ()=>{ closeSheet(); state.items = []; state.plans = []; state.lists = []; state.group = null; state.gid = null; await store.logout(); };
 }
 
 /* ---------- eventos ---------- */
 $("loginBtn").onclick = async ()=>{ $("loginErr").hidden = true; try{ await store.login(); }catch(e){ loginError(e); } };
 $("gLogout").onclick = ()=>store.logout();
+let gPriv = false;
+document.querySelectorAll("[data-gpriv]").forEach(b=>b.onclick=()=>{ gPriv = b.dataset.gpriv==="1"; document.querySelectorAll("[data-gpriv]").forEach(x=>x.setAttribute("aria-pressed", x===b)); });
 $("gCreate").onclick = async ()=>{
   const btn = $("gCreate"); btn.disabled = true; $("gErr").hidden = true;
-  try{ enterGroup(await store.createGroup($("gName").value.trim() || "Nuestra lista")); }
+  try{ enterGroup(await store.createGroup($("gName").value.trim() || "Nuestra lista", gPriv)); refreshLists(); }
   catch(e){ console.error(e); $("gErr").hidden = false; $("gErr").textContent = "No se pudo crear la lista. Revisá la conexión y probá de nuevo."; }
   btn.disabled = false;
 };
@@ -783,11 +1117,17 @@ $("gJoin").onclick = async ()=>{
   $("gErr").hidden = true;
   if(code.length < 6){ $("gErr").hidden = false; $("gErr").textContent = "El código tiene 6 letras o números."; return; }
   const btn = $("gJoin"); btn.disabled = true;
-  try{ enterGroup(await store.joinGroup(code)); }
-  catch(e){ console.error(e); $("gErr").hidden = false; $("gErr").textContent = e && e.code==="not-found" ? "Ese código no existe. Revisá que esté bien escrito." : "No se pudo unir a la lista. Probá de nuevo."; }
+  try{ enterGroup(await store.joinGroup(code)); refreshLists(); }
+  catch(e){ console.error(e); $("gErr").hidden = false; $("gErr").textContent = joinErr(e); }
   btn.disabled = false;
 };
 $("menuBtn").onclick = menuSheet;
+$("listSw").onclick = listsSheet;
+$("planes").addEventListener("click", e=>{
+  if(e.target.closest("[data-newplan]")) return planSheet(null);
+  const b = e.target.closest("[data-plan]");
+  if(b){ const p = state.plans.find(x=>x.id===b.dataset.plan); if(p) planSheet(p); }
+});
 document.querySelectorAll(".seg [data-view]").forEach(b=>b.onclick=()=>{ state.view = b.dataset.view; render(); });
 $("tabs").addEventListener("click", e=>{ const b=e.target.closest("[data-tab]"); if(b){ state.tab=b.dataset.tab; if(state.q){ state.q=""; $("q").value=""; } render(); } });
 let qTimer; $("q").addEventListener("input", e=>{ clearTimeout(qTimer); qTimer = setTimeout(()=>{ state.q = e.target.value.trim(); render(); }, 150); });
@@ -804,7 +1144,7 @@ $("mapFilters").addEventListener("click", e=>{
   if(e.target.closest("#mlDone")){ state.mapShowDone = !state.mapShowDone; renderMap(); }
 });
 $("heroBtn").onclick = pickSheet;
-$("addBtn").onclick = ()=>itemForm(null);
+$("addBtn").onclick = ()=>state.view==="planes" ? planSheet(null) : itemForm(null);
 $("list").addEventListener("click", e=>{
   const ph = e.target.closest("[data-photo]");
   if(ph){ const it = state.items.find(i=>i.id===ph.dataset.photo); if(it) photoSheet(it); return; }

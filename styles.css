@@ -60,7 +60,7 @@ header{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
 .tab[aria-selected="true"]{background:var(--accent);color:var(--accent-ink)}
 .tab small{display:block;font-weight:500;font-size:.75rem;opacity:.8}
 
-.seg{display:flex;gap:16px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}
+.seg{display:flex;gap:14px;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}
 .seg button{flex:none;border:0;background:none;padding:6px 0 10px;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}
 .seg button[aria-pressed="true"]{color:var(--ink);border-color:var(--ink)}
 
@@ -182,3 +182,33 @@ textarea{resize:vertical;min-height:64px}
 .pick a{color:var(--accent-ink) !important;text-decoration:underline !important}
 .pickf{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .pickf select{padding:9px 10px}
+
+/* 0.6.0: varias listas y planes */
+.listsw{border:0;background:none;padding:0;font:inherit;color:inherit;letter-spacing:inherit;text-align:left;display:inline-flex;align-items:center;gap:6px;max-width:100%}
+.listsw span{overflow-wrap:anywhere}
+.listsw .caret{flex:none;color:var(--muted);margin-top:4px}
+.lrow{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px}
+.lrow[aria-current="true"]{border-color:var(--accent);background:var(--accent-soft)}
+.lrow .ic{font-size:1.2rem;flex:none}
+.lrow .t{font-weight:600;display:block}
+.lrow .s{font-size:.82rem;color:var(--muted);display:block}
+.lnote{background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px;font-size:.9rem}
+.plans{display:flex;flex-direction:column;gap:10px}
+.pcard{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:14px;text-align:left;display:flex;flex-direction:column;gap:4px;width:100%}
+.pcard b{font-family:var(--display);font-size:1.2rem;font-weight:800;line-height:1.15;overflow-wrap:anywhere}
+.pcard .pd{font-size:.85rem;font-weight:600;color:var(--accent)}
+.pcard .pd.past{color:var(--muted)}
+.pcard ol{margin:2px 0 0;padding-left:20px;font-size:.88rem;color:var(--muted)}
+.stops{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:6px}
+.stop{display:flex;gap:10px;align-items:center;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:8px 8px 8px 10px}
+.stop .num,.stopnum span{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-weight:700;font-size:.85rem;background:var(--accent);color:var(--accent-ink);flex:none}
+.stop .body{flex:1;min-width:0}
+.stop .title{font-size:.95rem;font-weight:600;overflow-wrap:anywhere}
+.stop .note{font-size:.8rem;color:var(--muted)}
+.stop.gone .title{color:var(--muted);text-decoration:line-through}
+.sbtns{display:flex;gap:2px;flex:none}
+.sbtns button{border:0;background:none;width:34px;height:34px;border-radius:8px;font-size:1rem;color:var(--ink)}
+.sbtns button:disabled{opacity:.25}
+.picker{display:flex;flex-direction:column;gap:6px;max-height:44vh;overflow:auto}
+.stopnum{background:none;border:0}
+.stopnum span{border:2.5px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35);width:28px;height:28px}

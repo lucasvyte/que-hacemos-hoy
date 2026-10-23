@@ -6,8 +6,11 @@ service cloud.firestore {
     function isMember(gid) {
       return signedIn() && request.auth.uid in groupDoc(gid).data.members;
     }
-    // Máximo de personas por lista. Si algún día quieren sumar a alguien más, subir este número.
-    function maxMembers() { return 2; }
+    // Máximo de personas por lista compartida. Para sumar más gente, subir este número.
+    function maxMembers() { return 10; }
+    // Lista privada: una sola persona y sin código de invitación
+    function isPrivate(d) { return d.get('private', false) == true; }
+    function privateOk(d) { return !isPrivate(d) || (d.members.size() == 1 && d.inviteCode == ""); }
 
     // Texto opcional: puede faltar o ser null; si está, tiene que ser texto de hasta "max" caracteres
     function optStr(d, k, max) { return !(k in d) || d[k] == null || (d[k] is string && d[k].size() <= max); }
@@ -47,30 +50,50 @@ service cloud.firestore {
         && code.matches('^[A-Z0-9]{6}$')
         && request.resource.data.keys().hasOnly(['groupId'])
         && request.auth.uid in getAfter(/databases/$(database)/documents/groups/$(request.resource.data.groupId)).data.members
+        && !isPrivate(getAfter(/databases/$(database)/documents/groups/$(request.resource.data.groupId)).data)
         && getAfter(/databases/$(database)/documents/groups/$(request.resource.data.groupId)).data.inviteCode == code;
-      allow delete: if signedIn() && isMember(resource.data.groupId);
+      // lo borra un miembro, o cualquiera si la lista ya no existe (al borrar la lista)
+      allow delete: if signedIn() && (isMember(resource.data.groupId)
+        || !existsAfter(/databases/$(database)/documents/groups/$(resource.data.groupId)));
     }
 
     match /groups/{gid} {
-      allow get: if signedIn() && request.auth.uid in resource.data.members;
+      // cada uno ve solo las listas en las que está (y puede pedir "mis listas")
+      allow get, list: if signedIn() && request.auth.uid in resource.data.members;
 
       allow create: if signedIn()
         && request.resource.data.members == [request.auth.uid]
-        && request.resource.data.keys().hasOnly(['name', 'members', 'memberInfo', 'inviteCode', 'createdAt'])
+        && request.resource.data.keys().hasOnly(['name', 'members', 'memberInfo', 'inviteCode', 'createdAt', 'private'])
         && request.resource.data.name is string && request.resource.data.name.size() <= 60
         && request.resource.data.inviteCode is string
+        && (!('private' in request.resource.data) || request.resource.data.private is bool)
+        && privateOk(request.resource.data)
         && request.resource.data.memberInfo.keys().hasOnly([request.auth.uid])
         && validMemberInfo(request.resource.data.memberInfo[request.auth.uid]);
 
+      // borrar la lista: solo si quedó una sola persona (vos)
+      allow delete: if signedIn() && resource.data.members == [request.auth.uid];
+
       allow update: if signedIn() && (
-        // un miembro puede cambiar el nombre y el código, nada más
+        // un miembro puede cambiar el nombre, el código y si es privada (privada solo si está solo)
         (request.auth.uid in resource.data.members
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'inviteCode'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name', 'inviteCode', 'private'])
           && request.resource.data.name is string && request.resource.data.name.size() <= 60
-          && request.resource.data.inviteCode is string)
+          && request.resource.data.inviteCode is string
+          && (!('private' in request.resource.data) || request.resource.data.private is bool)
+          && privateOk(request.resource.data))
+        ||
+        // un miembro se va de la lista (solo se saca a sí mismo y no puede dejarla vacía)
+        (request.auth.uid in resource.data.members
+          && resource.data.members.size() > 1
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberInfo'])
+          && request.resource.data.members == resource.data.members.removeAll([request.auth.uid])
+          && request.resource.data.memberInfo.keys().hasOnly(resource.data.memberInfo.keys().removeAll([request.auth.uid]))
+          && resource.data.memberInfo.diff(request.resource.data.memberInfo).affectedKeys().hasOnly([request.auth.uid]))
         ||
         // alguien nuevo se suma solo a sí mismo, con el código vigente, y solo si hay lugar
         (!(request.auth.uid in resource.data.members)
+          && !isPrivate(resource.data)
           && resource.data.members.size() < maxMembers()
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'memberInfo', 'lastJoinCode'])
           && request.resource.data.members == resource.data.members.concat([request.auth.uid])
@@ -84,6 +107,19 @@ service cloud.firestore {
       match /items/{id} {
         allow read, delete: if isMember(gid);
         allow create, update: if isMember(gid) && validItem(request.resource.data);
+      }
+
+      // Planes (itinerarios): paradas en orden, que son ítems de esta misma lista
+      match /plans/{id} {
+        allow read, delete: if isMember(gid);
+        allow create, update: if isMember(gid)
+          && request.resource.data.keys().hasOnly(['title', 'date', 'stops', 'note', 'createdBy', 'createdAt', 'updatedAt'])
+          && request.resource.data.title is string && request.resource.data.title.size() <= 100
+          && optStr(request.resource.data, 'date', 10)
+          && optStr(request.resource.data, 'note', 1000)
+          && optStr(request.resource.data, 'createdBy', 128)
+          && request.resource.data.stops is list && request.resource.data.stops.size() <= 30
+          && optNum(request.resource.data, 'createdAt') && optNum(request.resource.data, 'updatedAt');
       }
 
       // Fotos: solo los miembros, y solo una imagen JPEG guardada dentro del documento
