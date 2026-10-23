@@ -5,6 +5,7 @@ import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRe
 import { initializeFirestore, getFirestore, persistentLocalCache, persistentMultipleTabManager,
   doc, getDoc, setDoc, updateDoc, deleteDoc, collection, onSnapshot, writeBatch, arrayUnion }
   from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+import { parseCaption } from "./caption.js";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBB2YeVAAisCXTyfRAPm0MIHLUPv_JP9eg",
@@ -15,8 +16,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.4.1";
+const VERSION = "0.5.0";
 const CHANGELOG = [
+  ["0.5.0","Completar solo: pegá o dictá la descripción del reel y la app llena el barrio, el nombre del lugar, la lista y la ubicación si dice la dirección."],
   ["0.4.1","Más seguridad: la lista admite hasta 2 personas, solo vale el código vigente, se controlan los datos que se guardan y se verifica la librería del mapa."],
   ["0.4.0","App instalable para Android: entrar con Google, lista compartida con código de invitación, compartir reels desde Instagram, mapa con un pin por lugar y funciona sin conexión."],
   ["0.3.0","Vista Barrios, links de Instagram reconocidos y campo aparte para la ubicación en Maps."],
@@ -230,7 +232,7 @@ function maybeOpenShare(){
   if(!state.share) return;
   const s = state.share; state.share = null;
   const guessList = isIG(s.url) || !s.url ? state.tab : state.tab;
-  itemForm(null, { link:s.url, note:s.text, title:s.title, list:guessList, fromShare:true });
+  itemForm(null, { link:s.url, note:s.text, title:s.title, list:guessList, fromShare:true, caption:s.text });
 }
 
 function banner(msg, actionLabel, action){
@@ -469,6 +471,14 @@ function itemForm(item, pre={}){
     <h2>${item?"Editar":pre.fromShare?"Guardar lo compartido":"Agregar"}</h2>
     <form id="itemForm" style="display:flex;flex-direction:column;gap:14px">
       <div class="pills" role="group" aria-label="Lista">${Object.entries(LISTS).map(([k,v])=>`<button type="button" class="pill" data-list="${k}" aria-pressed="${list===k}"><span class="dot" style="background:${listColor(k)}"></span>${v.one}</button>`).join("")}</div>
+      <div class="lbl capbox">
+        <button type="button" class="linkbtn" id="capOpen" ${pre.fromShare?"hidden":""}>📋 Completar con la descripción del reel</button>
+        <div id="capPanel" ${pre.fromShare?"":"hidden"} style="display:flex;flex-direction:column;gap:8px">
+          <label>Descripción del reel<textarea id="fCap" maxlength="5000" placeholder="Pegá la descripción del reel o dictá lo que dicen: barrio, nombre del lugar, dirección…"></textarea></label>
+          <div class="row" style="gap:8px">${navigator.clipboard && navigator.clipboard.readText ? `<button type="button" class="btn ghost" id="capPaste">Pegar</button>` : ""}<button type="button" class="btn ghost" id="capGo">Completar</button></div>
+          <span class="lhint" id="capHint" hidden></span>
+        </div>
+      </div>
       <label>Qué es<input id="fTitle" type="text" maxlength="120" required value="${esc(it.title)}" placeholder="Ej.: Parrilla en San Telmo"></label>
       <label>Barrio o zona<input id="fZonaIn" type="text" maxlength="60" list="zonasList" value="${esc(it.zona)}" placeholder="Ej.: Palermo, Tigre, centro">
         <datalist id="zonasList">${zonas.map(z=>`<option value="${esc(z)}"></option>`).join("")}</datalist></label>
@@ -507,7 +517,9 @@ function itemForm(item, pre={}){
   const addTag = ()=>{ const t=$("fNewTag").value.trim(); if(t && !tags.some(x=>norm(x)===norm(t)) && tags.length<8) tags.push(t); $("fNewTag").value=""; paintTags(); };
   $("fAddTag").onclick = addTag;
   $("fNewTag").addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); addTag(); } });
-  sh.querySelectorAll("[data-list]").forEach(b=>b.onclick=()=>{ list=b.dataset.list; sh.querySelectorAll("[data-list]").forEach(x=>x.setAttribute("aria-pressed", x===b)); if(pin) pin.setStyle({ fillColor:listColor(list) }); });
+  let listTouched = false;
+  const pickList = k=>{ list=k; sh.querySelectorAll("[data-list]").forEach(x=>x.setAttribute("aria-pressed", x.dataset.list===k)); if(pin) pin.setStyle({ fillColor:listColor(list) }); };
+  sh.querySelectorAll("[data-list]").forEach(b=>b.onclick=()=>{ listTouched = true; list=b.dataset.list; sh.querySelectorAll("[data-list]").forEach(x=>x.setAttribute("aria-pressed", x===b)); if(pin) pin.setStyle({ fillColor:listColor(list) }); });
   sh.querySelectorAll("[data-price]").forEach(b=>b.onclick=()=>{ price=+b.dataset.price; sh.querySelectorAll("[data-price]").forEach(x=>x.setAttribute("aria-pressed", x===b)); });
 
   /* links */
@@ -565,6 +577,38 @@ function itemForm(item, pre={}){
   linkHint();
   if(!loc) mapsChanged();
   if(pre.openMap) openMap();
+
+  /* completar con la descripción del reel (todo se lee acá, no se guarda ni se manda) */
+  const auto = {};   // lo que ya completó esto, para poder corregirlo si cambia el texto
+  const canFill = (id, key) => { const v = $(id).value.trim(); return !v || v === auto[key]; };
+  let locAuto = false;
+  const fillFromCaption = async ()=>{
+    const txt = $("fCap").value, h = $("capHint");
+    if(!txt.trim()){ h.hidden = true; return; }
+    const r = parseCaption(txt, zonas), done = [];
+    if(r.zona && canFill("fZonaIn","zona")){ $("fZonaIn").value = auto.zona = r.zona; done.push("barrio " + r.zona); }
+    if(r.name && canFill("fTitle","title")){ $("fTitle").value = auto.title = r.name; done.push("nombre"); }
+    if(r.list && !item && !listTouched && r.list !== list){ pickList(r.list); done.push(LISTS[r.list].label.toLowerCase()); }
+    h.hidden = false;
+    h.textContent = done.length ? "Completé: " + done.join(" · ") + ". Revisalo." : "No encontré barrio ni nombre. Completalo a mano.";
+    if(r.address && (!loc || locAuto) && navigator.onLine !== false){
+      const q = [r.address, $("fZonaIn").value.trim(), "Buenos Aires"].filter(Boolean).join(", ");
+      $("locQ").value = q;
+      try{
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&countrycodes=ar&accept-language=es&q=${encodeURIComponent(q)}`);
+        const d = (await res.json())[0];
+        if(d && $("capHint")){ setLoc({ lat:+d.lat, lng:+d.lon }, true); locAuto = true; h.textContent += ` Ubiqué ${r.address} en el mapa.`; }
+      }catch{}
+    }
+  };
+  $("capOpen").onclick = ()=>{ $("capOpen").hidden = true; $("capPanel").hidden = false; $("fCap").focus(); };
+  $("capGo").onclick = fillFromCaption;
+  $("fCap").addEventListener("paste", ()=>setTimeout(fillFromCaption, 0));
+  if($("capPaste")) $("capPaste").onclick = async ()=>{
+    try{ const t = await navigator.clipboard.readText(); if(t){ $("fCap").value = t.slice(0,5000); fillFromCaption(); } else toast("No hay nada copiado."); }
+    catch{ toast("No pude leer lo copiado. Mantené apretado el cuadro y elegí Pegar."); }
+  };
+  if(pre.caption){ $("fCap").value = pre.caption; fillFromCaption(); }
 
   /* acciones */
   $("fCancel").onclick = closeSheet;
