@@ -17,8 +17,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.7.0";
+const VERSION = "0.7.1";
 const CHANGELOG = [
+  ["0.7.1","Cambiar el nombre de la lista es más fácil: tocás el nombre arriba y lo editás ahí mismo."],
   ["0.7.0","Calendario: todos tus planes de todas tus listas (privadas y compartidas) en un mes, con los días marcados. Tocás un plan y se abre, aunque sea de otra lista."],
   ["0.6.3","Las actualizaciones llegan apenas se publican (antes podían tardar hasta 10 minutos)."],
   ["0.6.2","La opción de lista privada ahora se llama “Mi lista”."],
@@ -772,7 +773,10 @@ function renderCal(){
 function listsSheet(){
   let priv = true;
   const draw = ()=>{
+    const curName = state.group ? state.group.name || "" : "";
     openSheet(`
+      ${state.group ? `<div class="lbl">Nombre de esta lista
+        <div class="addtag"><input id="rnName" type="text" maxlength="40" value="${esc(curName)}" aria-label="Nombre de esta lista" enterkeyhint="done"><button type="button" id="rnOk">Guardar</button></div></div>` : ""}
       <h2>Tus listas</h2>
       <div style="display:flex;flex-direction:column;gap:6px">${state.lists.map(l=>{
         const n = (l.members||[]).length;
@@ -790,6 +794,18 @@ function listsSheet(){
       <div class="err" id="nlErr" hidden></div>
       <div class="row"><button type="button" class="btn ghost" id="nlClose">Cerrar</button></div>`);
     const err = m => { $("nlErr").hidden = false; $("nlErr").textContent = m; };
+    if($("rnName")){
+      const rename = async ()=>{
+        const v = $("rnName").value.trim();
+        if(!v) return err("La lista necesita un nombre.");
+        if(v === curName) return closeSheet();
+        $("rnOk").disabled = true;
+        try{ await store.rename(v); const l = state.lists.find(x=>x.id===state.gid); if(l) l.name = v; toast("Nombre cambiado"); closeSheet(); }
+        catch(e){ console.error(e); $("rnOk").disabled = false; err("No se pudo cambiar el nombre. Revisá la conexión."); }
+      };
+      $("rnOk").onclick = rename;
+      $("rnName").addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); rename(); } });
+    }
     $("sheet").querySelectorAll("[data-gl]").forEach(b=>b.onclick=()=>{ closeSheet(); if(b.dataset.gl!==state.gid){ state.view = ["planes","calendario"].includes(state.view) ? state.view : "pend"; enterGroup(b.dataset.gl); } });
     $("sheet").querySelectorAll("[data-np]").forEach(b=>b.onclick=()=>{ priv = b.dataset.np==="1"; const name = $("nlName").value; draw(); $("nlName").value = name; });
     $("nlCreate").onclick = async ()=>{
