@@ -17,8 +17,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.9.1";
+const VERSION = "0.10.0";
 const CHANGELOG = [
+  ["0.10.0","Al agregar algo se puede poner día y hora (“Cuándo”). Lo que tiene día aparece en el Calendario junto con los planes, de todas tus listas."],
   ["0.9.1","Al crear un plan se elige el día y la hora juntos, arriba de todo."],
   ["0.9.0","Más categorías además de Actividades, Para comer y Para visitar: Música, Cine, Teatro, Bares y Deporte, y podés crear las tuyas con “+ Otra”."],
   ["0.8.0","Al agregar algo, barrio, ubicación y mapa están juntos en “Dónde”: buscás el lugar o pegás un link de Maps y se pone el pin y el barrio solos."],
@@ -59,7 +60,7 @@ const BA = [-34.6037, -58.3816];
 const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
 const MAX_MEMBERS = 10;   // tiene que coincidir con maxMembers() en firestore.rules
-const state = { items:[], plans:[], lists:[], plansLoaded:false, calPlans:{}, calMonth:"", calDay:"", pendingPlan:null, tab:"actividad", view:"pend", q:"", zona:"", tag:"",
+const state = { items:[], plans:[], lists:[], plansLoaded:false, calPlans:{}, calItems:{}, pendingItem:null, calMonth:"", calDay:"", pendingPlan:null, tab:"actividad", view:"pend", q:"", zona:"", tag:"",
   me:null, group:null, gid:null, loaded:false, lastPick:null, share:null, installEvt:null,
   mapShowDone:false, mapHidden:new Set(), mapFitted:false };
 const $ = id => document.getElementById(id);
@@ -238,6 +239,7 @@ function firebaseStore(){
     save(id, data, gid){ setDoc(doc(fs, itemsPath(gid || state.gid), id), data, { merge:true }).catch(report); },
     newPlanId(){ return doc(collection(fs, plansPath())).id; },
     watchPlansOf(gid, cb){ return onSnapshot(collection(fs, `groups/${gid}/plans`), s => cb(s.docs.map(d=>({ id:d.id, ...d.data() }))), e=>{ console.error(e); cb([]); }); },
+    watchDatedOf(gid, cb){ return onSnapshot(query(collection(fs, `groups/${gid}/items`), where("date", ">", "")), s => cb(s.docs.map(d=>({ id:d.id, ...d.data() }))), e=>{ console.error(e); cb([]); }); },
     savePlan(id, data){ setDoc(doc(fs, plansPath(), id), data, { merge:true }).catch(report); },
     removePlan(id){ deleteDoc(doc(fs, plansPath(), id)).catch(report); },
     remove(id){ deleteDoc(doc(fs, itemsPath(), id)).catch(report); deleteDoc(doc(fs, `groups/${state.gid}/photos`, id)).catch(()=>{}); },
@@ -286,6 +288,7 @@ function demoStore(){
     remove(id){ D().items = D().items.filter(x=>x.id!==id); photos.delete(id); emit(); },
     newPlanId(){ return "p"+Math.random().toString(36).slice(2,9); },
     watchPlansOf(gid, cb){ cb(D(gid).plans.map(p=>({...p}))); return ()=>{}; },
+    watchDatedOf(gid, cb){ cb(D(gid).items.filter(i=>i.date).map(i=>({...i}))); return ()=>{}; },
     savePlan(id, d){ put(D().plans, id, d); emit(); },
     removePlan(id){ D().plans = D().plans.filter(x=>x.id!==id); emit(); },
     async getPhoto(id){ return photos.get(id) || ""; },
@@ -357,6 +360,12 @@ function enterGroup(gid){
 }
 
 function maybeOpenPendingPlan(){
+  const pi = state.pendingItem;
+  if(pi && pi.gid === state.gid && state.loaded){
+    state.pendingItem = null;
+    const it = state.items.find(x=>x.id===pi.id);
+    if(it) itemForm(it); else toast("No encontré eso en la lista.");
+  }
   const pp = state.pendingPlan;
   if(!pp || pp.gid !== state.gid || !state.loaded || !state.plansLoaded) return;
   state.pendingPlan = null;
@@ -422,6 +431,7 @@ function itemMeta(i, opts={}){
   const by = (state.group && state.group.memberInfo && state.group.memberInfo[i.createdBy] || {}).name || "";
   return [
     opts.showList ? `<span class="zone" style="font-weight:500"><span class="dot" style="background:${listColor(i.list)}"></span>${esc(catOf(i.list).label)}</span>` : "",
+    i.date && !i.done ? `<span class="chip">📅 ${esc(i.date===todayStr() ? "Hoy" : fmtDay(i.date))}${i.time?" · "+esc(i.time)+" h":""}</span>` : "",
     i.zona ? `<span class="zone">${PIN}${esc(i.zona)}</span>` : "",
     priceHtml(i.price),
     ...tagsOf(i).map(t=>`<span class="tag">${esc(t)}</span>`),
@@ -745,10 +755,17 @@ function planSheet(plan, preStop, preDate){
 /* ---------- calendario: los planes de todas tus listas ---------- */
 const ymd = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
 const calSubs = new Map();   // gid -> cortar la escucha
-function stopCal(){ calSubs.forEach(u=>u()); calSubs.clear(); }
+const calItemSubs = new Map();
+function stopCal(){ calSubs.forEach(u=>u()); calSubs.clear(); calItemSubs.forEach(u=>u()); calItemSubs.clear(); }
 function watchCal(){
   const ids = new Set(state.lists.map(l=>l.id));
   calSubs.forEach((u, gid)=>{ if(!ids.has(gid)){ u(); calSubs.delete(gid); delete state.calPlans[gid]; } });
+  calItemSubs.forEach((u, gid)=>{ if(!ids.has(gid)){ u(); calItemSubs.delete(gid); delete state.calItems[gid]; } });
+  ids.forEach(gid=>{
+    if(calItemSubs.has(gid)) return;
+    calItemSubs.set(gid, ()=>{});
+    calItemSubs.set(gid, store.watchDatedOf(gid, items=>{ state.calItems[gid] = items; calRedraw(); }));
+  });
   ids.forEach(gid=>{
     if(calSubs.has(gid)) return;
     calSubs.set(gid, ()=>{});
@@ -767,6 +784,7 @@ function renderCal(){
   const listOf = gid => state.lists.find(l=>l.id===gid) || {};
   const all = [];
   Object.entries(state.calPlans).forEach(([gid, ps])=>{ if(calSubs.has(gid)) ps.forEach(p=>all.push({ ...p, gid })); });
+  Object.entries(state.calItems).forEach(([gid, its])=>{ if(calItemSubs.has(gid)) its.forEach(i=>{ if(i.date) all.push({ ...i, gid, isItem:true }); }); });
   const byDay = new Map();
   all.filter(p=>p.date).forEach(p=>{ if(!byDay.has(p.date)) byDay.set(p.date, []); byDay.get(p.date).push(p); });
   const [y, m] = state.calMonth.split("-").map(Number);
@@ -780,6 +798,10 @@ function renderCal(){
   }
   const card = p=>{
     const l = listOf(p.gid), n = (p.stops||[]).length;
+    if(p.isItem) return `<button type="button" class="pcard ${p.done?"is-done":""}" data-calitem="${esc(p.gid)}|${esc(p.id)}">
+      <span class="pd ${p.date<t ? "past" : ""}">${esc(p.date===t ? "Hoy" : fmtDay(p.date)) + (p.time ? " · " + esc(p.time) + " h" : "")} · <span class="dot" style="background:${listColor(p.list)}"></span> ${esc(catOf(p.list).one)}${p.done?" · hecho":""}</span>
+      <b>${esc(p.title)}</b>
+      <span class="hint">${l.private?"🔒":"👥"} ${esc(l.name||"Lista")}${p.zona?" · "+esc(p.zona):""}</span></button>`;
     return `<button type="button" class="pcard" data-calplan="${esc(p.gid)}|${esc(p.id)}">
       <span class="pd ${p.date && p.date<t ? "past" : ""}">${p.date ? esc(p.date===t ? "Hoy" : fmtDay(p.date)) + (p.time ? " · " + esc(p.time) + " h" : "") + " · " : ""}${n} parada${n===1?"":"s"}</span>
       <b>${esc(p.title)}</b>
@@ -788,14 +810,14 @@ function renderCal(){
   };
   const inMonth = all.filter(p=>p.date && p.date.startsWith(state.calMonth)).sort((a,b)=>(a.date+(a.time||"")).localeCompare(b.date+(b.time||"")) || String(a.title).localeCompare(String(b.title),"es"));
   const shown = state.calDay ? inMonth.filter(p=>p.date===state.calDay) : inMonth;
-  const undated = all.filter(p=>!p.date).sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
-  const loading = state.lists.some(l=>!(l.id in state.calPlans));
+  const undated = all.filter(p=>!p.date && !p.isItem).sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
+  const loading = state.lists.some(l=>!(l.id in state.calPlans) || !(l.id in state.calItems));
   $("cal").innerHTML = `
     <div class="calhead"><button type="button" class="calnav" data-calnav="-1" aria-label="Mes anterior">‹</button><b>${esc(title)}</b><button type="button" class="calnav" data-calnav="1" aria-label="Mes siguiente">›</button></div>
     <div class="calgrid">${["L","M","M","J","V","S","D"].map(d=>`<span class="cdow">${d}</span>`).join("")}${cells}</div>
     <div class="callegend"><span><b class="dotp"></b>Compartida</span><span><b class="dotp priv"></b>Privada</span>${state.calMonth!==t.slice(0,7) || (state.calDay && state.calDay!==t)?`<button type="button" class="linkbtn" data-caltoday>Ir a hoy</button>`:""}</div>
-    <div class="sec">${state.calDay ? esc(fmtDay(state.calDay)) : "Planes de " + esc(first.toLocaleDateString("es-AR",{ month:"long" }))}</div>
-    ${shown.length ? shown.map(card).join("") : `<div class="empty"><b>${loading ? "Cargando…" : state.calDay ? "Nada ese día" : "Nada este mes"}</b>${loading ? "" : state.calDay ? "Tocá <strong>+ Nuevo plan</strong> para armar uno para ese día." : "Los planes con día aparecen acá, de todas tus listas."}</div>`}
+    <div class="sec">${state.calDay ? esc(fmtDay(state.calDay)) : "Todo " + esc(first.toLocaleDateString("es-AR",{ month:"long" }).replace(/^/, "en "))}</div>
+    ${shown.length ? shown.map(card).join("") : `<div class="empty"><b>${loading ? "Cargando…" : state.calDay ? "Nada ese día" : "Nada este mes"}</b>${loading ? "" : state.calDay ? "Tocá <strong>+ Nuevo plan</strong> para armar uno para ese día." : "Los planes y lo que tenga día aparecen acá, de todas tus listas."}</div>`}
     ${undated.length && !state.calDay ? `<div class="sec">Sin fecha</div>${undated.map(card).join("")}` : ""}`;
 }
 
@@ -892,6 +914,8 @@ function itemForm(item, pre={}){
         </div>
       </div>
       <label>Qué es<input id="fTitle" type="text" maxlength="120" required value="${esc(it.title)}" placeholder="Ej.: Parrilla en San Telmo"></label>
+      <div class="lbl">Cuándo (opcional)
+        <div class="row" style="gap:8px"><input id="fDate" type="date" aria-label="Día" value="${esc(it.date||pre.date||"")}"><input id="fTime" type="time" aria-label="Hora" value="${esc(it.time||"")}"></div></div>
       <label>Link del reel o de la web<input id="fLink" type="url" inputmode="url" value="${esc(lk.link)}" placeholder="https://www.instagram.com/reel/…"><span class="lhint" id="fLinkHint" hidden></span></label>
       <div class="lbl where">Dónde
         <div class="addtag"><input id="locQ" type="search" placeholder="Lugar, dirección o link de Maps" aria-label="Buscar el lugar"><button type="button" id="locGo">Buscar</button></div>
@@ -1100,7 +1124,9 @@ function itemForm(item, pre={}){
     if(maps && !safeUrl(maps)) return showErr("El link de Maps tiene que empezar con https://");
     let zona = $("fZonaIn").value.trim();
     const same = zonas.find(z=>norm(z)===norm(zona)); if(same) zona = same;
-    const data = { list, title, note:$("fNote").value.trim(), zona, tags, link, maps, price, lat:loc?loc.lat:null, lng:loc?loc.lng:null };
+    const date = $("fDate").value || "", time = $("fTime").value || "";
+    if(time && !date) return showErr("Elegí también el día.");
+    const data = { list, title, note:$("fNote").value.trim(), zona, tags, link, maps, price, lat:loc?loc.lat:null, lng:loc?loc.lng:null, date, time };
     const gid = $("fGid") ? $("fGid").value : state.gid;
     if(item) store.save(item.id, data);
     else {
@@ -1325,6 +1351,12 @@ $("cal").addEventListener("click", e=>{
   if(e.target.closest("[data-caltoday]")){ state.calMonth = todayStr().slice(0,7); state.calDay = todayStr(); return renderCal(); }
   const day = e.target.closest("[data-day]");
   if(day){ state.calDay = state.calDay===day.dataset.day ? "" : day.dataset.day; return renderCal(); }
+  const ci = e.target.closest("[data-calitem]");
+  if(ci){
+    const [gid, id] = ci.dataset.calitem.split("|");
+    if(gid===state.gid){ const it = state.items.find(x=>x.id===id); if(it) itemForm(it); return; }
+    state.pendingItem = { gid, id }; enterGroup(gid); return;
+  }
   const pc = e.target.closest("[data-calplan]");
   if(pc){
     const [gid, pid] = pc.dataset.calplan.split("|");
