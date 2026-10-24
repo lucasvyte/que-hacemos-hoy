@@ -17,8 +17,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.14.0";
+const VERSION = "0.14.1";
 const CHANGELOG = [
+  ["0.14.1","Para descubrir y el dado ordenan las propuestas por día (hoy, mañana, y así), con un título por día, y ya no muestran las que pasaron."],
   ["0.14.0","Planes ahora está adentro de “Para hacer”. Con “Juntar ideas” marcás varias cosas de tu lista y se arma un plan con ellas. Arriba quedan menos pestañas."],
   ["0.13.0","Más simple: “Hechos” ahora está adentro de “Para hacer”, con un interruptor Por hacer / Hechos. Una pestaña menos arriba."],
   ["0.12.0","El dado de “¿Qué hacemos hoy?” ahora te sugiere algo al azar de lo que pasa en Buenos Aires (Turismo BA y Baires Secreta), no de lo que ya agregaron. Si te gusta, lo sumás a tu lista."],
@@ -1318,6 +1319,79 @@ function paintDiscBtn(){
   $("discSub").textContent = n ? `${n} propuestas de esta semana en Buenos Aires` : "Propuestas de esta semana en Buenos Aires";
 }
 const DAYS = ["domingo","lunes","martes","miercoles","jueves","viernes","sabado"];
+/* ---- cuándo pasa cada propuesta: lee "Sábado 24 y domingo 25", "Del martes 20 al sábado 31", "Viernes, 20 h."… ---- */
+const MESES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+const WD = "(lunes|martes|mi[eé]rcoles|jueves|viernes|s[aá]bados?|domingos?)";
+const MES = "(" + MESES.join("|") + ")";
+const dayStart = d => { const x = new Date(d); x.setHours(12,0,0,0); return x; };
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate()+n); return x; };
+const wdIdx = w => DAYS.indexOf(norm(w).replace(/s$/, ""));
+function resolveDay(n, mesName, wdName, from, today){
+  if(mesName){
+    let d = dayStart(new Date(today.getFullYear(), MESES.indexOf(norm(mesName)), n));
+    if(d < addDays(today, -180)) d = dayStart(new Date(today.getFullYear()+1, MESES.indexOf(norm(mesName)), n));
+    return d;
+  }
+  const want = wdName ? wdIdx(wdName) : -1, cands = [];
+  for(const off of [-1, 0, 1]){ const d = dayStart(new Date(today.getFullYear(), today.getMonth()+off, n)); if(d.getDate()===n) cands.push(d); }
+  const match = cands.filter(d=>want<0 || d.getDay()===want);
+  const pool = match.length ? match : cands;   // si el día de la semana no coincide (error de la página), confía en el número
+  const fromD = from ? dayStart(from+"T12:00:00") : null;
+  return pool.sort((a,b)=>Math.abs(a - (fromD||today)) - Math.abs(b - (fromD||today)))[0] || null;
+}
+function schedOf(d){
+  if(d._sched) return d._sched;
+  const today = dayStart(new Date()), t = norm(d.when || "");
+  const sc = { from: d.from ? dayStart(d.from+"T12:00:00") : null, ranges:[], dates:[], days:(d.days||[]).filter(x=>DAYS.includes(x)) };
+  const nwd = norm(WD), nmes = norm(MES);
+  const rr = new RegExp(`(?:(del?)\\s+)?(?:${nwd}\\s+)?(\\d{1,2})(?:\\s+de\\s+${nmes})?\\s+al?\\s+(?:${nwd}\\s+)?(\\d{1,2})(?:\\s+de\\s+${nmes})?`, "g");
+  let m, rest = t;
+  while((m = rr.exec(t))){
+    const [, del, w1, n1, m1, w2, n2, m2] = m;
+    if(!((del || w1) && (w2 || m2))) continue;                     // "de 11 a 19 h" es un horario, no fechas
+    const a = resolveDay(+n1, m1 || (m2 && !w1 ? m2 : null), w1, d.from, today), b = resolveDay(+n2, m2, w2, d.from, today);
+    if(a && b){ sc.ranges.push([a, b < a ? addDays(b, 31) : b]); rest = rest.replace(m[0], " "); }
+  }
+  const rs = new RegExp(`${nwd}\\s+(\\d{1,2})(?:\\s+de\\s+${nmes})?(?!\\s*(?:h\\b|:|\\d))`, "g");
+  while((m = rs.exec(rest))){ const dd = resolveDay(+m[2], m[3], m[1], d.from, today); if(dd) sc.dates.push(+dd); }
+  const tm = (d.when || "").replace(/^[^,]*\d{1,2}(?=,)/, "").match(/(\d{1,2})(?::(\d{2}))?\s*(?:a\s+\d|y\s+\d|h)/);
+  sc.time = tm ? String(tm[1]).padStart(2,"0") + ":" + (tm[2] || "00") : "";
+  sc.recurring = !sc.ranges.length && !sc.dates.length;
+  return (d._sched = sc);
+}
+function occursOn(d, date){
+  const sc = schedOf(d), x = +dayStart(date), wd = DAYS[dayStart(date).getDay()];
+  if(sc.from && x < +sc.from) return false;
+  if(sc.ranges.length) return sc.ranges.some(([a,b])=>x>=+a && x<=+b) && (!sc.days.length || sc.days.includes(wd));
+  if(sc.dates.length) return sc.dates.includes(x);
+  return sc.days.length ? sc.days.includes(wd) : false;
+}
+/* próxima fecha (desde hoy) en que pasa; null = sin fecha conocida; false = ya pasó */
+function nextDate(d){
+  const sc = schedOf(d), today = dayStart(new Date());
+  if(sc.recurring && !sc.days.length) return null;
+  for(let i=0; i<62; i++){ const day = addDays(today, i); if(occursOn(d, day)) return day; }
+  return false;
+}
+const weekendDays = ()=>{ const t = dayStart(new Date()), out = []; for(let i=0; i<7; i++){ const x = addDays(t, i); if([5,6,0].includes(x.getDay())) out.push(x); if(x.getDay()===0) break; } return out; };
+function discMatchesWhen(d, when){
+  if(when==="todo") return nextDate(d) !== false;
+  if(when==="hoy") return occursOn(d, new Date());
+  return weekendDays().some(x=>occursOn(d, x));
+}
+/* ordena por día (y hora); lo que no tiene fecha va al final */
+function sortByDay(list, when){
+  const wk = weekendDays();
+  return list.map(d=>{
+    const nd = when==="finde" ? (wk.find(x=>occursOn(d, x)) || null) : when==="hoy" ? dayStart(new Date()) : nextDate(d);
+    return { d, nd, k: nd ? +nd : Infinity, r: schedOf(d).recurring ? 1 : 0, tm: schedOf(d).time || "99" };
+  }).sort((a,b)=>a.k-b.k || a.r-b.r || a.tm.localeCompare(b.tm) || (b.d.posted||0)-(a.d.posted||0));
+}
+const dayTitle = date => {
+  const t = dayStart(new Date()), diff = Math.round((dayStart(date) - t) / 864e5);
+  const s = dayStart(date).toLocaleDateString("es-AR", { weekday:"long", day:"numeric", month:"long" });
+  return diff===0 ? "Hoy · " + s : diff===1 ? "Mañana · " + s : s.charAt(0).toUpperCase() + s.slice(1);
+};
 const inMyList = d => state.items.some(i=>i.link && d.link && i.link===d.link);
 function addDisc(d){
   if(!state.gid || !state.me) return false;
@@ -1338,8 +1412,9 @@ function discSheet(){
     const cats = [...new Set(all.map(d=>d.cat))].filter(Boolean);
     const rows = all.filter(d=>
       (f.src==="todo" || d.src===f.src) && (!f.free || d.free) && (!f.cat || d.cat===f.cat)
-      && (f.when==="todo" || (d.days && (f.when==="hoy" ? d.days.includes(today) : d.days.some(x=>finde.includes(x)))))
+      && discMatchesWhen(d, f.when)
       && (!f.q || norm([d.title, d.tipo, d.place, d.zona, d.when].join(" ")).includes(norm(f.q))));
+    const sorted = sortByDay(rows, f.when);
     const upd = discData && Object.values(discData.sources||{}).map(s=>s.updated).filter(Boolean).sort().pop();
     const failed = discData ? Object.entries(discData.sources||{}).filter(([,s])=>s.ok===false).map(([k])=>k==="turismo"?"Turismo BA":"Baires Secreta") : [];
     const pill = (k, v, label) => `<button type="button" class="pill" data-df="${k}" data-dv="${esc(v)}" aria-pressed="${String(f[k])===String(v)}">${label}</button>`;
@@ -1352,11 +1427,13 @@ function discSheet(){
       ${cats.length>1 ? `<div class="pills">${pill("cat","","Todos los tipos")}${cats.map(c=>pill("cat", c, `<span class="dot" style="background:${listColor(c)}"></span>${esc(catOf(c).label)}`)).join("")}</div>` : ""}
       <div class="sec">${rows.length} propuesta${rows.length===1?"":"s"}</div>
       <div class="disclist">${!discData ? `<div class="empty"><b>${discLoading ? "Cargando…" : "No se pudieron cargar"}</b>${discLoading ? "" : "Revisá la conexión y probá de nuevo."}</div>`
-        : rows.length ? rows.slice(0, 80).map(d=>{
+        : rows.length ? sorted.slice(0, 120).map(({ d, nd }, idx, arr)=>{
+          const prev = idx ? arr[idx-1].nd : undefined;
+          const head = (idx===0 || +prev !== +nd) ? `<div class="sec dayhead">${nd ? esc(dayTitle(nd)) : "Sin fecha fija"}</div>` : "";
           const sub = [d.tipo, d.free ? "Gratis" : ""].filter(Boolean).join(" · ");
           const where = [d.place, d.zona && !(d.place||"").includes(d.zona) ? d.zona : ""].filter(Boolean).join(" · ");
           const added = inMyList(d);
-          return `<div class="dcard">
+          return head + `<div class="dcard">
             ${d.img ? `<img src="${esc(d.img)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}
             <div class="dbody">
               <span class="dk"><span class="dot" style="background:${listColor(d.cat)}"></span>${esc(sub)}</span>
@@ -1391,7 +1468,7 @@ function pickSheet(){
     const today = DAYS[new Date().getDay()];
     return discItems().filter(d=>
       (!f.free || d.free) && (!f.cat || d.cat===f.cat)
-      && (f.when==="todo" || (d.days && d.days.length && (f.when==="hoy" ? d.days.includes(today) : d.days.some(x=>DAYS_FINDE.includes(x))))));
+      && discMatchesWhen(d, f.when));
   };
   const draw = ()=>{
     const cats = [...new Set(discItems().map(d=>d.cat))].filter(Boolean);
