@@ -17,8 +17,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.10.2";
+const VERSION = "0.10.3";
 const CHANGELOG = [
+  ["0.10.3","Reloj propio para elegir la hora, igual al del celular pero con todos los botones a la vista."],
   ["0.10.2","Vuelve el reloj del celular para elegir la hora."],
   ["0.10.0","Al agregar algo se puede poner día y hora (“Cuándo”). Lo que tiene día aparece en el Calendario junto con los planes, de todas tus listas."],
   ["0.9.1","Al crear un plan se elige el día y la hora juntos, arriba de todo."],
@@ -614,6 +615,75 @@ function sinUbicarSheet(){
   $("sheet").querySelectorAll("[data-sin]").forEach(b=>b.onclick=()=>{ const it = state.items.find(x=>x.id===b.dataset.sin); if(it) itemForm(it, { openMap:true }); });
 }
 
+/* ---------- reloj para elegir la hora (el del sistema corta los botones en algunos celulares) ---------- */
+const timeBtn = (id, v) => `<input type="hidden" id="${id}" value="${esc(v||"")}"><button type="button" class="tbtn ${v?"set":""}" id="${id}Btn">${v ? esc(v) : "--:--"}</button>`;
+function wireTime(id){
+  const inp = $(id), btn = $(id+"Btn");
+  if(!inp || !btn) return;
+  const paint = ()=>{ btn.textContent = inp.value || "--:--"; btn.classList.toggle("set", !!inp.value); };
+  btn.onclick = ()=>clockPick(inp.value, v=>{ inp.value = v; paint(); });
+}
+function clockPick(cur, done){
+  const now = new Date();
+  let [h, m] = cur ? cur.split(":").map(Number) : [now.getHours(), 0];
+  let mode = "h";
+  const ov = document.createElement("div");
+  ov.className = "clk-ov";
+  ov.innerHTML = `<div class="clk" role="dialog" aria-modal="true" aria-label="Elegir hora">
+    <div class="clk-head"><button type="button" data-cm="h"></button><span>:</span><button type="button" data-cm="m"></button></div>
+    <div class="clk-dial"><svg viewBox="0 0 260 260" aria-hidden="true"></svg></div>
+    <div class="clk-btns"><button type="button" data-cx="clear">Borrar</button><button type="button" data-cx="cancel">Cancelar</button><button type="button" data-cx="ok">Listo</button></div></div>`;
+  document.body.appendChild(ov);
+  const svg = ov.querySelector("svg"), C = 130;
+  const pos = (deg, r) => [C + r*Math.sin(deg*Math.PI/180), C - r*Math.cos(deg*Math.PI/180)];
+  const two = n => String(n).padStart(2, "0");
+  const draw = ()=>{
+    ov.querySelectorAll("[data-cm]").forEach(b=>{ b.textContent = two(b.dataset.cm==="h" ? h : m); b.setAttribute("aria-pressed", b.dataset.cm===mode); });
+    let marks = "", sel;
+    if(mode==="h"){
+      for(let i=0; i<12; i++){
+        const outer = i===0 ? 12 : i, inner = i===0 ? 0 : i+12;
+        const [ox, oy] = pos(i*30, 104), [ix, iy] = pos(i*30, 68);
+        marks += `<text x="${ox}" y="${oy}" class="clk-n ${h===outer?"on":""}">${outer}</text><text x="${ix}" y="${iy}" class="clk-n in ${h===inner?"on":""}">${two(inner)}</text>`;
+      }
+      const isInner = h===0 || h>12;
+      sel = pos((h%12)*30, isInner ? 68 : 104).concat(isInner ? 17 : 20);
+    } else {
+      for(let i=0; i<12; i++){ const [x, y] = pos(i*30, 104); marks += `<text x="${x}" y="${y}" class="clk-n ${m===i*5?"on":""}">${two(i*5)}</text>`; }
+      sel = pos(m*6, 104).concat(m%5 ? 6 : 20);
+    }
+    svg.innerHTML = `<circle cx="${C}" cy="${C}" r="128" class="clk-face"/>
+      <line x1="${C}" y1="${C}" x2="${sel[0]}" y2="${sel[1]}" class="clk-hand"/><circle cx="${C}" cy="${C}" r="4" class="clk-dot"/>
+      <circle cx="${sel[0]}" cy="${sel[1]}" r="${sel[2]}" class="clk-sel"/>${marks}`;
+  };
+  const pick = (e, end)=>{
+    const r = svg.getBoundingClientRect(), k = 260 / r.width;
+    const dx = (e.clientX - r.left)*k - C, dy = (e.clientY - r.top)*k - C;
+    let deg = Math.atan2(dx, -dy) * 180 / Math.PI; if(deg < 0) deg += 360;
+    if(mode==="h"){
+      const i = Math.round(deg/30) % 12, inner = Math.hypot(dx, dy) < 86;
+      h = inner ? (i===0 ? 0 : i+12) : (i===0 ? 12 : i);
+      draw(); if(end){ mode = "m"; setTimeout(draw, 180); }
+    } else { m = Math.round(deg/6) % 60; draw(); }
+  };
+  let dragging = false;
+  svg.addEventListener("pointerdown", e=>{ dragging = true; svg.setPointerCapture(e.pointerId); pick(e); });
+  svg.addEventListener("pointermove", e=>{ if(dragging) pick(e); });
+  svg.addEventListener("pointerup", e=>{ if(dragging){ dragging = false; pick(e, true); } });
+  const close = v=>{ ov.remove(); window.removeEventListener("keydown", key, true); if(v !== null) done(v); };
+  const key = e=>{ if(e.key==="Escape"){ e.stopPropagation(); close(null); } };
+  window.addEventListener("keydown", key, true);
+  ov.addEventListener("click", e=>{
+    if(e.target===ov) return close(null);
+    const cm = e.target.closest("[data-cm]"); if(cm){ mode = cm.dataset.cm; draw(); return; }
+    const cx = e.target.closest("[data-cx]"); if(!cx) return;
+    if(cx.dataset.cx==="ok") close(two(h) + ":" + two(m));
+    else if(cx.dataset.cx==="clear") close("");
+    else close(null);
+  });
+  draw();
+}
+
 /* ---------- planes (itinerarios) ---------- */
 const todayStr = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset()*6e4).toISOString().slice(0,10); };
 const fmtDay = d => new Date(d+"T12:00:00").toLocaleDateString("es-AR",{ weekday:"short", day:"numeric", month:"short" });
@@ -661,7 +731,7 @@ function planSheet(plan, preStop, preDate){
     <h2>${plan ? "Plan" : "Nuevo plan"}</h2>
     <label>Nombre<input id="plTitle" type="text" maxlength="80" value="${esc(plan ? plan.title : "")}" placeholder="Ej.: Sábado en San Telmo"></label>
     <div class="lbl">Cuándo
-      <div class="row" style="gap:8px"><input id="plDate" type="date" aria-label="Día" value="${esc(plan ? plan.date || "" : preDate || "")}"><input id="plTime" type="time" aria-label="Hora" value="${esc(plan && plan.time || "")}"></div>
+      <div class="row" style="gap:8px"><input id="plDate" type="date" aria-label="Día" value="${esc(plan ? plan.date || "" : preDate || "")}">${timeBtn("plTime", plan && plan.time)}</div>
       <span class="hint">Día y hora son opcionales: podés dejarlo sin fecha.</span></div>
     <div class="lbl">Paradas, en orden
       <ol class="stops" id="plStops"></ol>
@@ -680,6 +750,7 @@ function planSheet(plan, preStop, preDate){
     <div class="row"><button type="button" class="btn ghost" id="plCancel">Cancelar</button><button type="button" class="btn primary" id="plSave">${plan?"Guardar":"Crear plan"}</button></div>
     ${plan ? `<div class="row" id="plDelRow"><button type="button" class="btn danger" id="plDel">Borrar plan</button></div>` : ""}`);
 
+  wireTime("plTime");
   const byId = id => state.items.find(i=>i.id===id);
   const paintMap = ()=>{
     const pts = stops.map(byId).filter(i=>i && hasLoc(i));
@@ -916,7 +987,7 @@ function itemForm(item, pre={}){
       </div>
       <label>Qué es<input id="fTitle" type="text" maxlength="120" required value="${esc(it.title)}" placeholder="Ej.: Parrilla en San Telmo"></label>
       <div class="lbl">Cuándo (opcional)
-        <div class="row" style="gap:8px"><input id="fDate" type="date" aria-label="Día" value="${esc(it.date||pre.date||"")}"><input id="fTime" type="time" aria-label="Hora" value="${esc(it.time||"")}"></div></div>
+        <div class="row" style="gap:8px"><input id="fDate" type="date" aria-label="Día" value="${esc(it.date||pre.date||"")}">${timeBtn("fTime", it.time)}</div></div>
       <label>Link del reel o de la web<input id="fLink" type="url" inputmode="url" value="${esc(lk.link)}" placeholder="https://www.instagram.com/reel/…"><span class="lhint" id="fLinkHint" hidden></span></label>
       <div class="lbl where">Dónde
         <div class="addtag"><input id="locQ" type="search" placeholder="Lugar, dirección o link de Maps" aria-label="Buscar el lugar"><button type="button" id="locGo">Buscar</button></div>
@@ -945,6 +1016,7 @@ function itemForm(item, pre={}){
       ${item?`<div class="row" id="delRow"><button type="button" class="btn danger" id="fDel">Borrar</button></div>`:""}
     </form>`);
   const sh = $("sheet");
+  wireTime("fTime");
   const showErr = m => { $("fErr").hidden=false; $("fErr").textContent=m; };
 
   /* etiquetas */

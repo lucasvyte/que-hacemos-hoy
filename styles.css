@@ -238,3 +238,24 @@ textarea{resize:vertical;min-height:64px}
 .where{border:1px solid var(--line);border-radius:14px;padding:12px}
 .where .wzona{margin-top:2px}
 .locbox a{color:var(--accent);font-weight:600}
+
+/* 0.10.3: reloj para la hora */
+.tbtn{border:1px solid var(--line);background:var(--bg);border-radius:12px;padding:11px 12px;font-size:16px;color:var(--muted);text-align:left;font-variant-numeric:tabular-nums}
+.tbtn.set{color:var(--ink)}
+.clk-ov{position:fixed;inset:0;z-index:3000;background:rgba(0,0,0,.55);display:grid;place-items:center;padding:16px}
+.clk{background:var(--surface);color:var(--ink);border-radius:24px;width:min(340px,100%);overflow:hidden;box-shadow:var(--shadow)}
+.clk-head{display:flex;justify-content:center;align-items:center;gap:2px;padding:18px 12px;background:var(--accent-soft);font-size:3.4rem;font-weight:600;line-height:1;font-variant-numeric:tabular-nums}
+.clk-head span{color:var(--muted)}
+.clk-head button{border:0;background:none;font:inherit;color:var(--muted);padding:4px 8px;border-radius:14px}
+.clk-head button[aria-pressed="true"]{color:var(--ink);background:var(--surface)}
+.clk-dial{padding:18px 18px 6px}
+.clk-dial svg{display:block;width:100%;height:auto;touch-action:none;user-select:none;-webkit-user-select:none;cursor:pointer}
+.clk-face{fill:var(--bg)}
+.clk-hand{stroke:var(--accent);stroke-width:2}
+.clk-dot,.clk-sel{fill:var(--accent)}
+.clk-n{fill:var(--ink);font-size:16px;font-weight:500;text-anchor:middle;dominant-baseline:central;pointer-events:none;font-family:var(--body)}
+.clk-n.in{fill:var(--muted);font-size:13px}
+.clk-n.on{fill:var(--accent-ink);font-weight:700}
+.clk-btns{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px;padding:6px 12px 14px}
+.clk-btns button{border:0;background:none;color:var(--accent);font-weight:700;font-size:1rem;padding:10px 12px;border-radius:10px}
+.clk-btns [data-cx="clear"]{margin-right:auto}
