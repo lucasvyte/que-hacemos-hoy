@@ -17,8 +17,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.10.0";
+const VERSION = "0.10.1";
 const CHANGELOG = [
+  ["0.10.1","Elegir la hora es más lindo: en vez del reloj del celular, tocás la hora y los minutos ahí mismo."],
   ["0.10.0","Al agregar algo se puede poner día y hora (“Cuándo”). Lo que tiene día aparece en el Calendario junto con los planes, de todas tus listas."],
   ["0.9.1","Al crear un plan se elige el día y la hora juntos, arriba de todo."],
   ["0.9.0","Más categorías además de Actividades, Para comer y Para visitar: Música, Cine, Teatro, Bares y Deporte, y podés crear las tuyas con “+ Otra”."],
@@ -613,6 +614,39 @@ function sinUbicarSheet(){
   $("sheet").querySelectorAll("[data-sin]").forEach(b=>b.onclick=()=>{ const it = state.items.find(x=>x.id===b.dataset.sin); if(it) itemForm(it, { openMap:true }); });
 }
 
+/* ---------- elegir hora sin el reloj del sistema ---------- */
+const HOURS = [...Array(24).keys()].map(h=>String(h).padStart(2,"0"));
+const MINS = ["00","15","30","45"];
+const timeBtn = (id, v) => `<input type="hidden" id="${id}" value="${esc(v||"")}"><button type="button" class="tbtn ${v?"set":""}" id="${id}Btn" aria-expanded="false">🕒 ${v ? esc(v) + " h" : "Hora"}</button>`;
+const timePanel = id => `<div class="tpanel" id="${id}Panel" hidden>
+  <span class="tlabel">Hora</span><div class="tgrid" data-th>${HOURS.map(h=>`<button type="button" data-h="${h}">${h}</button>`).join("")}</div>
+  <span class="tlabel">Minutos</span><div class="tgrid tm" data-tm>${MINS.map(m=>`<button type="button" data-m="${m}">:${m}</button>`).join("")}</div>
+  <div class="row" style="gap:8px"><button type="button" class="btn ghost" data-tclear>Sin hora</button><button type="button" class="btn primary" data-tok>Listo</button></div></div>`;
+function wireTime(id){
+  const inp = $(id), btn = $(id+"Btn"), panel = $(id+"Panel");
+  if(!inp || !btn || !panel) return;
+  const paint = ()=>{
+    const [h, m] = (inp.value || ":").split(":");
+    btn.innerHTML = "🕒 " + (inp.value ? esc(inp.value) + " h" : "Hora"); btn.classList.toggle("set", !!inp.value);
+    panel.querySelectorAll("[data-h]").forEach(b=>b.setAttribute("aria-pressed", b.dataset.h===h));
+    panel.querySelectorAll("[data-m]").forEach(b=>b.setAttribute("aria-pressed", !!inp.value && b.dataset.m===m));
+  };
+  const open = v=>{ panel.hidden = !v; btn.setAttribute("aria-expanded", v); if(v) setTimeout(()=>panel.scrollIntoView({ block:"nearest", behavior:"smooth" }), 30); };
+  btn.onclick = ()=>open(panel.hidden);
+  panel.onclick = e=>{
+    const hb = e.target.closest("[data-h]"), mb = e.target.closest("[data-m]");
+    const [, m] = (inp.value || ":").split(":");
+    if(hb){ inp.value = hb.dataset.h + ":" + (m || "00"); paint(); }
+    else if(mb){ const [h] = (inp.value || ":").split(":"); inp.value = (h || "20") + ":" + mb.dataset.m; paint(); }
+    else if(e.target.closest("[data-tclear]")){ inp.value = ""; paint(); open(false); }
+    else if(e.target.closest("[data-tok]")) open(false);
+  };
+  // si la hora guardada no es de 15 en 15, igual se muestra
+  const cur = (inp.value || "").split(":")[1];
+  if(cur && !MINS.includes(cur)){ const g = panel.querySelector("[data-tm]"); g.insertAdjacentHTML("afterbegin", `<button type="button" data-m="${esc(cur)}">:${esc(cur)}</button>`); }
+  paint();
+}
+
 /* ---------- planes (itinerarios) ---------- */
 const todayStr = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset()*6e4).toISOString().slice(0,10); };
 const fmtDay = d => new Date(d+"T12:00:00").toLocaleDateString("es-AR",{ weekday:"short", day:"numeric", month:"short" });
@@ -660,7 +694,7 @@ function planSheet(plan, preStop, preDate){
     <h2>${plan ? "Plan" : "Nuevo plan"}</h2>
     <label>Nombre<input id="plTitle" type="text" maxlength="80" value="${esc(plan ? plan.title : "")}" placeholder="Ej.: Sábado en San Telmo"></label>
     <div class="lbl">Cuándo
-      <div class="row" style="gap:8px"><input id="plDate" type="date" aria-label="Día" value="${esc(plan ? plan.date || "" : preDate || "")}"><input id="plTime" type="time" aria-label="Hora" value="${esc(plan && plan.time || "")}"></div>
+      <div class="row" style="gap:8px"><input id="plDate" type="date" aria-label="Día" value="${esc(plan ? plan.date || "" : preDate || "")}">${timeBtn("plTime", plan && plan.time)}</div>${timePanel("plTime", plan && plan.time)}
       <span class="hint">Día y hora son opcionales: podés dejarlo sin fecha.</span></div>
     <div class="lbl">Paradas, en orden
       <ol class="stops" id="plStops"></ol>
@@ -679,6 +713,7 @@ function planSheet(plan, preStop, preDate){
     <div class="row"><button type="button" class="btn ghost" id="plCancel">Cancelar</button><button type="button" class="btn primary" id="plSave">${plan?"Guardar":"Crear plan"}</button></div>
     ${plan ? `<div class="row" id="plDelRow"><button type="button" class="btn danger" id="plDel">Borrar plan</button></div>` : ""}`);
 
+  wireTime("plTime");
   const byId = id => state.items.find(i=>i.id===id);
   const paintMap = ()=>{
     const pts = stops.map(byId).filter(i=>i && hasLoc(i));
@@ -915,7 +950,7 @@ function itemForm(item, pre={}){
       </div>
       <label>Qué es<input id="fTitle" type="text" maxlength="120" required value="${esc(it.title)}" placeholder="Ej.: Parrilla en San Telmo"></label>
       <div class="lbl">Cuándo (opcional)
-        <div class="row" style="gap:8px"><input id="fDate" type="date" aria-label="Día" value="${esc(it.date||pre.date||"")}"><input id="fTime" type="time" aria-label="Hora" value="${esc(it.time||"")}"></div></div>
+        <div class="row" style="gap:8px"><input id="fDate" type="date" aria-label="Día" value="${esc(it.date||pre.date||"")}">${timeBtn("fTime", it.time)}</div>${timePanel("fTime", it.time)}</div>
       <label>Link del reel o de la web<input id="fLink" type="url" inputmode="url" value="${esc(lk.link)}" placeholder="https://www.instagram.com/reel/…"><span class="lhint" id="fLinkHint" hidden></span></label>
       <div class="lbl where">Dónde
         <div class="addtag"><input id="locQ" type="search" placeholder="Lugar, dirección o link de Maps" aria-label="Buscar el lugar"><button type="button" id="locGo">Buscar</button></div>
@@ -944,6 +979,7 @@ function itemForm(item, pre={}){
       ${item?`<div class="row" id="delRow"><button type="button" class="btn danger" id="fDel">Borrar</button></div>`:""}
     </form>`);
   const sh = $("sheet");
+  wireTime("fTime");
   const showErr = m => { $("fErr").hidden=false; $("fErr").textContent=m; };
 
   /* etiquetas */
