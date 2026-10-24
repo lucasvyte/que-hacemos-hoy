@@ -17,8 +17,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.9.0";
+const VERSION = "0.9.1";
 const CHANGELOG = [
+  ["0.9.1","Al crear un plan se elige el día y la hora juntos, arriba de todo."],
   ["0.9.0","Más categorías además de Actividades, Para comer y Para visitar: Música, Cine, Teatro, Bares y Deporte, y podés crear las tuyas con “+ Otra”."],
   ["0.8.0","Al agregar algo, barrio, ubicación y mapa están juntos en “Dónde”: buscás el lugar o pegás un link de Maps y se pone el pin y el barrio solos."],
   ["0.7.1","Cambiar el nombre de la lista es más fácil: tocás el nombre arriba y lo editás ahí mismo."],
@@ -609,7 +610,7 @@ function sortedPlans(){
   const t = todayStr();
   const rank = p => !p.date ? 1 : p.date >= t ? 0 : 2;   // próximos, sin fecha, pasados
   return state.plans.slice().sort((a,b)=> rank(a)-rank(b)
-    || (rank(a)===0 ? a.date.localeCompare(b.date) : rank(a)===2 ? b.date.localeCompare(a.date) : 0)
+    || (rank(a)===0 ? (a.date+(a.time||"")).localeCompare(b.date+(b.time||"")) : rank(a)===2 ? (b.date+(b.time||"")).localeCompare(a.date+(a.time||"")) : 0)
     || (b.updatedAt||0)-(a.updatedAt||0));
 }
 function renderPlanes(){
@@ -623,7 +624,7 @@ function renderPlanes(){
   const t = todayStr();
   box.innerHTML = sortedPlans().map(p=>{
     const stops = (p.stops||[]).map(id=>state.items.find(i=>i.id===id)).filter(Boolean);
-    const when = p.date ? (p.date===t ? "Hoy" : fmtDay(p.date)) : "Sin fecha";
+    const when = p.date ? (p.date===t ? "Hoy" : fmtDay(p.date)) + (p.time ? " · " + p.time + " h" : "") : "Sin fecha";
     return `<button type="button" class="pcard" data-plan="${esc(p.id)}">
       <span class="pd ${p.date && p.date<t ? "past" : ""}">${esc(when)} · ${stops.length} parada${stops.length===1?"":"s"}</span>
       <b>${esc(p.title)}</b>
@@ -648,7 +649,9 @@ function planSheet(plan, preStop, preDate){
   openSheet(`
     <h2>${plan ? "Plan" : "Nuevo plan"}</h2>
     <label>Nombre<input id="plTitle" type="text" maxlength="80" value="${esc(plan ? plan.title : "")}" placeholder="Ej.: Sábado en San Telmo"></label>
-    <label>Día (opcional)<input id="plDate" type="date" value="${esc(plan ? plan.date || "" : preDate || "")}"></label>
+    <div class="lbl">Cuándo
+      <div class="row" style="gap:8px"><input id="plDate" type="date" aria-label="Día" value="${esc(plan ? plan.date || "" : preDate || "")}"><input id="plTime" type="time" aria-label="Hora" value="${esc(plan && plan.time || "")}"></div>
+      <span class="hint">Día y hora son opcionales: podés dejarlo sin fecha.</span></div>
     <div class="lbl">Paradas, en orden
       <ol class="stops" id="plStops"></ol>
       <button type="button" class="linkbtn" id="plAdd">+ Sumar una parada de la lista</button>
@@ -723,6 +726,9 @@ function planSheet(plan, preStop, preDate){
     const title = $("plTitle").value.trim() || ($("plDate").value ? "Plan del " + fmtDay($("plDate").value) : "");
     if(!title){ $("plErr").hidden = false; $("plErr").textContent = "Ponele un nombre o un día."; return; }
     const data = { title, date:$("plDate").value || "", note:$("plNote").value.trim(), stops:stops.filter(byId), updatedAt:Date.now() };
+    const time = $("plTime").value || "";
+    if(time && !data.date){ $("plErr").hidden = false; $("plErr").textContent = "Elegí también el día."; return; }
+    if(time || (plan && plan.time)) data.time = time;
     if(plan) store.savePlan(plan.id, data);
     else store.savePlan(store.newPlanId(), { ...data, createdAt:Date.now(), createdBy:state.me.uid });
     closeSheet(); toast(plan ? "Plan guardado" : "Plan creado");
@@ -775,13 +781,13 @@ function renderCal(){
   const card = p=>{
     const l = listOf(p.gid), n = (p.stops||[]).length;
     return `<button type="button" class="pcard" data-calplan="${esc(p.gid)}|${esc(p.id)}">
-      <span class="pd ${p.date && p.date<t ? "past" : ""}">${p.date ? esc(p.date===t ? "Hoy" : fmtDay(p.date)) + " · " : ""}${n} parada${n===1?"":"s"}</span>
+      <span class="pd ${p.date && p.date<t ? "past" : ""}">${p.date ? esc(p.date===t ? "Hoy" : fmtDay(p.date)) + (p.time ? " · " + esc(p.time) + " h" : "") + " · " : ""}${n} parada${n===1?"":"s"}</span>
       <b>${esc(p.title)}</b>
       <span class="hint">${l.private?"🔒":"👥"} ${esc(l.name||"Lista")}${p.gid===state.gid?" · abierta":""}</span>
       ${p.note?`<span class="note">${esc(p.note)}</span>`:""}</button>`;
   };
-  const inMonth = all.filter(p=>p.date && p.date.startsWith(state.calMonth)).sort((a,b)=>a.date.localeCompare(b.date) || String(a.title).localeCompare(String(b.title),"es"));
-  const shown = state.calDay ? all.filter(p=>p.date===state.calDay) : inMonth;
+  const inMonth = all.filter(p=>p.date && p.date.startsWith(state.calMonth)).sort((a,b)=>(a.date+(a.time||"")).localeCompare(b.date+(b.time||"")) || String(a.title).localeCompare(String(b.title),"es"));
+  const shown = state.calDay ? inMonth.filter(p=>p.date===state.calDay) : inMonth;
   const undated = all.filter(p=>!p.date).sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
   const loading = state.lists.some(l=>!(l.id in state.calPlans));
   $("cal").innerHTML = `
