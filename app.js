@@ -17,8 +17,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.11.1";
+const VERSION = "0.12.0";
 const CHANGELOG = [
+  ["0.12.0","El dado de “¿Qué hacemos hoy?” ahora te sugiere algo al azar de lo que pasa en Buenos Aires (Turismo BA y Baires Secreta), no de lo que ya agregaron. Si te gusta, lo sumás a tu lista."],
   ["0.11.1","La pestaña “Pendientes” ahora se llama “Para hacer”."],
   ["0.11.0","Para descubrir: las propuestas de la semana de Turismo Buenos Aires y lo último de Baires Secreta, actualizadas todos los días. Las agregás a tu lista con un toque."],
   ["0.10.3","Reloj propio para elegir la hora, igual al del celular pero con todos los botones a la vista."],
@@ -1305,6 +1306,16 @@ function paintDiscBtn(){
 }
 const DAYS = ["domingo","lunes","martes","miercoles","jueves","viernes","sabado"];
 const inMyList = d => state.items.some(i=>i.link && d.link && i.link===d.link);
+function addDisc(d){
+  if(!state.gid || !state.me) return false;
+  const note = [d.when, d.place].filter(Boolean).join(" · ").slice(0, 400);
+  store.save(store.newId(), { list:d.cat || "actividad", title:d.title.slice(0, 120), note, zona:(d.zona||"").slice(0, 60),
+    tags: d.free ? ["Gratis"] : [], link:d.link, maps:"", price:0,
+    lat: typeof d.lat==="number" ? d.lat : null, lng: typeof d.lng==="number" ? d.lng : null,
+    done:false, rating:0, doneAt:0, memory:"", hasPhoto:false, createdAt:Date.now(), createdBy:state.me.uid });
+  toast(`Agregado a “${state.group?.name || "tu lista"}”`);
+  return true;
+}
 function discSheet(){
   let f = { when:"todo", free:false, src:"todo", cat:"" , q:"" };
   const draw = ()=>{
@@ -1350,51 +1361,60 @@ function discSheet(){
     let t; $("dQ").addEventListener("input", e=>{ clearTimeout(t); t = setTimeout(()=>{ f.q = e.target.value.trim(); const pos = e.target.selectionStart; draw(); $("dQ").focus(); try{ $("dQ").setSelectionRange(pos, pos); }catch{} }, 250); });
     $("dClose").onclick = closeSheet;
     sh.querySelectorAll("[data-dadd]").forEach(b=>b.onclick=()=>{
-      const d = all.find(x=>x.id===b.dataset.dadd); if(!d || !state.gid) return;
-      const note = [d.when, d.place].filter(Boolean).join(" · ").slice(0, 400);
-      store.save(store.newId(), { list:d.cat || "actividad", title:d.title.slice(0, 120), note, zona:(d.zona||"").slice(0, 60),
-        tags: d.free ? ["Gratis"] : [], link:d.link, maps:"", price:0,
-        lat: typeof d.lat==="number" ? d.lat : null, lng: typeof d.lng==="number" ? d.lng : null,
-        done:false, rating:0, doneAt:0, memory:"", hasPhoto:false, createdAt:Date.now(), createdBy:state.me.uid });
-      b.textContent = "✓ En tu lista"; b.className = "dadded"; b.disabled = true;
-      toast(`Agregado a “${state.group?.name || "tu lista"}”`);
+      const d = all.find(x=>x.id===b.dataset.dadd); if(!d) return;
+      if(addDisc(d)){ b.textContent = "✓ En tu lista"; b.className = "dadded"; b.disabled = true; }
     });
   };
   draw();
   if(!discData) loadDisc().then(()=>{ if($("dClose")) draw(); });
 }
 
+/* "¿Qué hacemos hoy?": una propuesta al azar de Turismo BA y Baires Secreta (no de lo que ya agregaron) */
 function pickSheet(){
-  let filter = "todo", maxPrice = 3, zona = "", tag = "";
-  const zonas = allZonas(), tags = uniq([].concat(...state.items.filter(i=>!i.done).map(tagsOf)));
-  openSheet(`
-    <h2>¿Qué hacemos hoy?</h2>
-    <div class="pills" role="group" aria-label="Qué tipo">${[["todo","Cualquier cosa"],...catKeys().map(k=>[k,catOf(k).label])].map(([k,l])=>`<button type="button" class="pill" data-f="${esc(k)}" aria-pressed="${k==="todo"}">${esc(l)}</button>`).join("")}</div>
-    <div class="pills" role="group" aria-label="Precio máximo">${[[1,"Barato"],[2,"Hasta $$"],[3,"Sin límite"]].map(([p,l])=>`<button type="button" class="pill" data-m="${p}" aria-pressed="${p===3}">${l}</button>`).join("")}</div>
-    ${zonas.length||tags.length ? `<div class="pickf">
-      ${zonas.length?`<select id="pZona" aria-label="Zona"><option value="">Cualquier zona</option>${zonas.map(z=>`<option value="${esc(z)}">${esc(z)}</option>`).join("")}</select>`:""}
-      ${tags.length?`<select id="pTag" aria-label="Etiqueta"><option value="">Cualquier etiqueta</option>${tags.map(t=>`<option value="${esc(t)}">${esc(t)}</option>`).join("")}</select>`:""}
-    </div>` : ""}
-    <div class="pick" id="pick" aria-live="polite"></div>
-    <div class="row"><button type="button" class="btn ghost" id="pClose">Cerrar</button><button type="button" class="btn primary" id="pAgain">Otra opción</button></div>`);
-  const sh = $("sheet");
-  const roll = ()=>{
-    let pool = state.items.filter(i=>!i.done && (filter==="todo"||i.list===filter) && (i.price||0)<=maxPrice
-      && (!zona || norm(i.zona)===norm(zona)) && (!tag || tagsOf(i).some(t=>norm(t)===norm(tag))));
-    if(pool.length>1) pool = pool.filter(i=>i.id!==state.lastPick);
-    const box = $("pick");
-    if(!pool.length){ box.innerHTML = `<div class="t">Nada que coincida</div><div class="n">Probá con otro filtro o agreguen más cosas a la lista.</div>`; return; }
-    const p = pool[Math.floor(Math.random()*pool.length)]; state.lastPick = p.id;
-    const links = linksHtml(p);
-    const k = [catOf(p.list).one, p.zona, p.price ? "$".repeat(p.price) : ""].filter(Boolean).map(esc).join(" · ");
-    box.innerHTML = `<div class="k">${k}</div><div class="t">${esc(p.title)}</div>${p.note?`<div class="n">${esc(p.note)}</div>`:""}${links?`<div class="links">${links}</div>`:""}`;
+  const f = { when:"todo", free:false, cat:"" };
+  let last = null;
+  const DAYS_FINDE = ["viernes","sabado","domingo"];
+  const pool = ()=>{
+    const today = DAYS[new Date().getDay()];
+    return discItems().filter(d=>
+      (!f.free || d.free) && (!f.cat || d.cat===f.cat)
+      && (f.when==="todo" || (d.days && d.days.length && (f.when==="hoy" ? d.days.includes(today) : d.days.some(x=>DAYS_FINDE.includes(x))))));
   };
-  sh.querySelectorAll("[data-f]").forEach(b=>b.onclick=()=>{ filter=b.dataset.f; sh.querySelectorAll("[data-f]").forEach(x=>x.setAttribute("aria-pressed",x===b)); roll(); });
-  sh.querySelectorAll("[data-m]").forEach(b=>b.onclick=()=>{ maxPrice=+b.dataset.m; sh.querySelectorAll("[data-m]").forEach(x=>x.setAttribute("aria-pressed",x===b)); roll(); });
-  if($("pZona")) $("pZona").onchange = e=>{ zona = e.target.value; roll(); };
-  if($("pTag")) $("pTag").onchange = e=>{ tag = e.target.value; roll(); };
-  $("pClose").onclick = closeSheet; $("pAgain").onclick = roll;
-  roll();
+  const draw = ()=>{
+    const cats = [...new Set(discItems().map(d=>d.cat))].filter(Boolean);
+    const pill = (k, v, label) => `<button type="button" class="pill" data-pf="${k}" data-pv="${esc(v)}" aria-pressed="${String(f[k])===String(v)}">${label}</button>`;
+    openSheet(`
+      <h2>¿Qué hacemos hoy?</h2>
+      <p class="hint" style="margin:-6px 0 0">Una idea al azar de lo que pasa en Buenos Aires.</p>
+      <div class="pills">${pill("when","todo","Cualquier día")}${pill("when","hoy","Hoy")}${pill("when","finde","Finde")}<button type="button" class="pill" data-pfree aria-pressed="${f.free}">Gratis</button></div>
+      ${cats.length>1 ? `<div class="pills">${pill("cat","","De todo")}${cats.map(c=>pill("cat", c, `<span class="dot" style="background:${listColor(c)}"></span>${esc(catOf(c).label)}`)).join("")}</div>` : ""}
+      <div class="pick" id="pick" aria-live="polite"></div>
+      <div class="row"><button type="button" class="btn ghost" id="pClose">Cerrar</button><button type="button" class="btn primary" id="pAgain">🎲 Otra</button></div>`);
+    const sh = $("sheet");
+    sh.querySelectorAll("[data-pf]").forEach(b=>b.onclick=()=>{ f[b.dataset.pf] = b.dataset.pv; draw(); });
+    sh.querySelector("[data-pfree]").onclick = ()=>{ f.free = !f.free; draw(); };
+    $("pClose").onclick = closeSheet;
+    $("pAgain").onclick = roll;
+    roll();
+  };
+  const roll = ()=>{
+    const box = $("pick"); if(!box) return;
+    if(!discData){ box.innerHTML = `<div class="t">${discLoading ? "Buscando ideas…" : "No hay ideas cargadas"}</div><div class="n">${discLoading ? "" : "Revisá la conexión y probá de nuevo."}</div>`; return; }
+    let list = pool();
+    if(list.length > 1) list = list.filter(d=>d.id!==last);
+    if(!list.length){ box.innerHTML = `<div class="t">Nada que coincida</div><div class="n">Probá con otro día o tipo.</div>`; return; }
+    const d = list[Math.floor(Math.random()*list.length)]; last = d.id;
+    const where = [d.place, d.zona && !(d.place||"").includes(d.zona) ? d.zona : ""].filter(Boolean).join(" · ");
+    const added = inMyList(d);
+    box.innerHTML = `<div class="k">${esc([catOf(d.cat).one, d.free ? "Gratis" : "", d.src==="secreta" ? "Baires Secreta" : "Turismo BA"].filter(Boolean).join(" · "))}</div>
+      <div class="t">${esc(d.title)}</div>
+      ${d.when ? `<div class="n">🗓 ${esc(d.when)}</div>` : ""}${where ? `<div class="n">📍 ${esc(where)}</div>` : ""}
+      <div class="pick-act"><a href="${esc(safeUrl(d.link))}" target="_blank" rel="noopener">Ver más ↗</a>
+        <button type="button" class="pick-add" id="pAdd" ${added?"disabled":""}>${added ? "✓ En tu lista" : "+ A mi lista"}</button></div>`;
+    if(!added) $("pAdd").onclick = ()=>{ addDisc(d); $("pAdd").textContent = "✓ En tu lista"; $("pAdd").disabled = true; };
+  };
+  draw();
+  if(!discData) loadDisc().then(()=>{ if($("pClose")) draw(); });
 }
 
 function menuSheet(){

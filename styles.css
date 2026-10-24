@@ -279,3 +279,9 @@ textarea{resize:vertical;min-height:64px}
 .dadd{border:0;background:var(--accent);color:var(--accent-ink);border-radius:999px;padding:7px 13px;font-weight:600;font-size:.85rem}
 .dadded{border:1px solid var(--line);background:none;color:var(--muted);border-radius:999px;padding:6px 12px;font-weight:600;font-size:.85rem}
 .hint a{color:var(--accent);font-weight:600}
+
+/* 0.12.0: dado con ideas de afuera */
+.pick-act{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:8px;flex-wrap:wrap}
+.pick-act a{color:inherit;font-weight:600;text-decoration:underline}
+.pick-add{border:0;background:var(--accent-ink);color:var(--accent);border-radius:999px;padding:8px 14px;font-weight:700}
+.pick-add:disabled{opacity:.7}
