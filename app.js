@@ -17,8 +17,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.14.2";
+const VERSION = "0.15.0";
 const CHANGELOG = [
+  ["0.15.0","Las secciones pasan abajo, como en cualquier app: Para hacer, Mapa y Calendario. Los barrios están adentro del Mapa, con “¿Qué tenemos cerca?”. Arriba aparece lo que tienen hoy y el finde, con una idea. Cada uno marca con ♥ lo que le copa, y lo que les gusta a los dos sube primero. Lo que agregás desde Para descubrir entra con su fecha al Calendario. Hechos ahora es un álbum de recuerdos por mes."],
   ["0.14.2","El botón Atrás del celular cierra lo que tengas abierto (una ventana, el reloj, Juntar ideas, otra pestaña) en vez de salir de la app."],
   ["0.14.1","Para descubrir y el dado ordenan las propuestas por día (hoy, mañana, y así), con un título por día, y ya no muestran las que pasaron."],
   ["0.14.0","Planes ahora está adentro de “Para hacer”. Con “Juntar ideas” marcás varias cosas de tu lista y se arma un plan con ellas. Arriba quedan menos pestañas."],
@@ -71,7 +72,7 @@ const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const MAX_MEMBERS = 10;   // tiene que coincidir con maxMembers() en firestore.rules
 const state = { items:[], plans:[], lists:[], plansLoaded:false, calPlans:{}, selecting:false, sel:new Set(), calItems:{}, pendingItem:null, calMonth:"", calDay:"", pendingPlan:null, tab:"actividad", view:"pend", q:"", zona:"", tag:"",
   me:null, group:null, gid:null, loaded:false, lastPick:null, share:null, installEvt:null,
-  mapShowDone:false, mapHidden:new Set(), mapFitted:false };
+  mapShowDone:false, mapHidden:new Set(), mapFitted:false, mapZona:"", near:null, findeIdea:"" };
 const $ = id => document.getElementById(id);
 
 /* ---------- utilidades ---------- */
@@ -128,7 +129,7 @@ function coordsFromUrl(u){
   return Math.abs(lat)<=90 && Math.abs(lng)<=180 ? {lat, lng} : null;
 }
 function toast(msg){ const t = $("toast"); t.textContent = msg; t.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(()=>t.hidden=true, 3200); }
-function show(view){ ["vLoading","vLogin","vGroup","vMain"].forEach(v=>$(v).hidden = v!==view); $("addBtn").hidden = view!=="vMain"; }
+function show(view){ ["vLoading","vLogin","vGroup","vMain"].forEach(v=>$(v).hidden = v!==view); $("addBtn").hidden = $("bnav").hidden = view!=="vMain"; }
 function genCode(){ const a = new Uint32Array(6); crypto.getRandomValues(a); return [...a].map(n=>CODE_CHARS[n % CODE_CHARS.length]).join(""); }
 
 /* lo que llega desde "Compartir" de otra app (Instagram manda el link en "text" o "url") */
@@ -261,8 +262,10 @@ function firebaseStore(){
 function demoStore(){
   const photos = new Map();
   let items = [
-    { id:"d1", list:"comer", title:"Ejemplo: pizzería de barrio", note:"La de muzza al molde que nos recomendaron", zona:"Almagro", tags:["Con amigos"], price:1, done:false, createdAt:Date.now()-5e8, lat:-34.6097, lng:-58.4206 },
-    { id:"d2", list:"actividad", title:"Ejemplo: picnic en los bosques", note:"Llevar mate y manta", zona:"Palermo", tags:["Al aire libre","Para el finde"], price:1, done:false, createdAt:Date.now()-4e8, link:"https://www.instagram.com/reel/EJEMPLO/", lat:-34.5711, lng:-58.4170 },
+    { id:"d1", list:"comer", title:"Ejemplo: pizzería de barrio", note:"La de muzza al molde que nos recomendaron", zona:"Almagro", tags:["Con amigos"], price:1, done:false, createdAt:Date.now()-5e8, lat:-34.6097, lng:-58.4206, likes:["ana"], date:ymd(new Date()), time:"21:00" },
+    { id:"d2", list:"actividad", title:"Ejemplo: picnic en los bosques", note:"Llevar mate y manta", zona:"Palermo", tags:["Al aire libre","Para el finde"], price:1, done:false, createdAt:Date.now()-4e8, link:"https://www.instagram.com/reel/EJEMPLO/", lat:-34.5711, lng:-58.4170, likes:["demo","ana"] },
+    { id:"d5", list:"comer", title:"Ejemplo: heladería artesanal", zona:"Palermo", tags:[], price:1, done:false, createdAt:Date.now()-2e8, lat:-34.5880, lng:-58.4300, likes:["demo"] },
+    { id:"d6", list:"comer", title:"Ejemplo: parrilla de barrio", zona:"San Telmo", tags:[], price:2, done:true, rating:5, doneAt:Date.now()-3e9, memory:"La mejor provoleta.", createdAt:Date.now()-9e9, lat:-34.6212, lng:-58.3731 },
     { id:"d3", list:"visitar", title:"Ejemplo: un museo nuevo", zona:"Recoleta", tags:["Día de lluvia"], price:2, done:true, rating:4, doneAt:Date.now()-2e8, memory:"Nos quedamos dos horas en la sala de arriba.", createdAt:Date.now()-9e8, lat:-34.5837, lng:-58.3931 },
     { id:"d4", list:"comer", title:"Ejemplo: café de especialidad", zona:"Palermo", tags:[], price:2, done:false, createdAt:Date.now()-3e8 }
   ];
@@ -350,7 +353,7 @@ async function goToAnotherList(badGid){
 function enterGroup(gid){
   if(state.gid !== gid){
     state.items = []; state.plans = []; state.group = null; state.zona = state.tag = state.q = ""; $("q").value = "";
-    state.mapFitted = false; photoCache.clear(); banner("");
+    state.mapFitted = false; state.mapZona = ""; state.near = null; photoCache.clear(); banner("");
   }
   state.gid = gid; state.loaded = false; state.plansLoaded = false;
   store.setCurrent(gid);
@@ -460,11 +463,15 @@ function render(){
   $("summary").textContent = state.loaded ? `${who}${pend} por hacer · ${done} hecho${done===1?"":"s"}` : "Cargando…";
   $("addLbl").textContent = state.view==="planes" ? "Nuevo plan" : state.view==="calendario" ? "Nuevo plan" : "Agregar";
 
+  if(state.view==="zonas") state.view = "mapa";   // Barrios ahora está adentro del Mapa
   const inParaHacer = ["pend","done","planes"].includes(state.view);
   if(state.selecting && state.view!=="pend") stopSelecting(true);
-  document.querySelectorAll(".seg [data-view]").forEach(b=>b.setAttribute("aria-pressed", b.dataset.view===state.view || (b.dataset.view==="pend" && inParaHacer)));
+  document.querySelectorAll(".bnav [data-view]").forEach(b=>b.setAttribute("aria-pressed", b.dataset.view===state.view || (b.dataset.view==="pend" && inParaHacer)));
   const listView = state.view==="pend" || state.view==="done";
-  $("tabs").hidden = $("tools").hidden = $("list").hidden = !listView;
+  $("heroBtn").hidden = $("discBtn").hidden = !inParaHacer;
+  renderFinde(state.view==="pend" && !state.selecting);
+  $("tools").hidden = $("list").hidden = !listView;
+  $("tabs").hidden = !listView || state.view==="done";   // Hechos es un álbum con todo junto
   $("doneSw").hidden = !inParaHacer;
   $("juntarBtn").hidden = !(inParaHacer && state.view!=="done") || state.selecting || (state.loaded && !state.items.some(i=>!i.done));
   $("nPlans").textContent = state.plansLoaded ? state.plans.length : "";
@@ -472,12 +479,10 @@ function render(){
   if(state.selecting){ const n = state.sel.size; $("selGo").textContent = n ? `Armar plan con ${n}` : "Elegí ideas"; $("selGo").disabled = !n; }
   document.querySelectorAll("#doneSw [data-dv]").forEach(b=>b.setAttribute("aria-pressed", b.dataset.dv===state.view));
   $("nPend").textContent = state.loaded ? pend : ""; $("nDone").textContent = state.loaded ? done : "";
-  $("zonas").hidden = state.view!=="zonas";
   $("mapWrap").hidden = state.view!=="mapa";
   $("planes").hidden = state.view!=="planes";
   $("cal").hidden = state.view!=="calendario";
   if(state.view!=="calendario") stopCal();
-  if(state.view==="zonas") return renderZonas();
   if(state.view==="mapa") return renderMap();
   if(state.view==="planes") return renderPlanes();
   if(state.view==="calendario") return renderCal();
@@ -492,8 +497,11 @@ function render(){
   if(selTab && (selTab.offsetLeft < tb.scrollLeft || selTab.offsetLeft + selTab.offsetWidth > tb.scrollLeft + tb.clientWidth)) tb.scrollLeft = selTab.offsetLeft - 8;
   renderFilters();
 
-  const rows = state.items.filter(i=>(searching || i.list===state.tab) && !!i.done===showDone && matches(i))
-    .sort((a,b)=> showDone ? (b.doneAt||0)-(a.doneAt||0) : (b.createdAt||0)-(a.createdAt||0));
+  const album = showDone && !searching;
+  const shared = (state.group?.members||[]).length > 1;
+  const loved = i => shared && likesOf(i).length >= 2;
+  const rows = state.items.filter(i=>(searching || album || i.list===state.tab) && !!i.done===showDone && matches(i))
+    .sort((a,b)=> showDone ? (b.doneAt||0)-(a.doneAt||0) : (loved(b)?1:0)-(loved(a)?1:0) || (b.createdAt||0)-(a.createdAt||0));
   const rn = $("resnote"); rn.hidden = !searching;
   if(searching) rn.textContent = `${rows.length} resultado${rows.length===1?"":"s"} en ${showDone?"hechos":"por hacer"} de esta lista`;
 
@@ -506,10 +514,14 @@ function render(){
       : `<li class="empty"><b>Lista vacía</b>Tocá <strong>+ Agregar</strong> o compartí un reel desde Instagram.</li>`;
     return;
   }
-  list.innerHTML = rows.map(i=>{
+  if(album){ list.innerHTML = albumHtml(rows); hydratePhotos(list); return; }
+  const nLoved = showDone || searching ? 0 : rows.filter(loved).length;
+  const lovedHead = (state.group?.members||[]).length===2 ? "♥ A los dos les copa" : "♥ Les copa a varios";
+  list.innerHTML = rows.map((i, n)=>{
     const meta = itemMeta(i, { showList:searching });
     const on = state.selecting && state.sel.has(i.id);
-    return `<li class="item ${i.done?"is-done":""} ${state.selecting?"selecting":""} ${on?"picked":""}" ${state.selecting?`data-sel="${esc(i.id)}"`:""}>
+    const head = nLoved && n===0 ? `<li class="lsec love">${lovedHead}</li>` : nLoved && n===nLoved && rows.length>nLoved ? `<li class="lsec">El resto</li>` : "";
+    return head + `<li class="item ${i.done?"is-done":""} ${state.selecting?"selecting":""} ${on?"picked":""} ${n<nLoved?"loved":""}" ${state.selecting?`data-sel="${esc(i.id)}"`:""}>
       ${state.selecting
         ? `<button class="selbox" type="button" data-sel="${esc(i.id)}" aria-pressed="${on}" aria-label="${on?"Sacar del plan":"Sumar al plan"}">${on?CHECK:""}</button>`
         : `<button class="check" type="button" data-check="${esc(i.id)}" aria-label="${i.done?"Volver a por hacer":"Marcar como hecho"}">${i.done?CHECK:""}</button>`}
@@ -517,21 +529,88 @@ function render(){
         ${i.done && i.memory ? `<div class="memory">${esc(i.memory)}</div>` : ""}
         ${i.done && i.hasPhoto ? `<button type="button" class="thumb" data-photo="${esc(i.id)}" aria-label="Ver foto"><img data-ph="${esc(i.id)}" alt="Foto de ${esc(i.title)}"></button>` : ""}
       </div>
-      ${state.selecting ? "" : `<button class="more" type="button" data-edit="${esc(i.id)}" aria-label="Editar">⋯</button>`}
+      ${state.selecting ? "" : `<div class="side"><button class="more" type="button" data-edit="${esc(i.id)}" aria-label="Editar">⋯</button>${shared && !i.done ? heartHtml(i) : ""}</div>`}
     </li>`;
   }).join("");
   hydratePhotos(list);
 }
 
+/* ---------- ganas: cada uno marca con ♥ lo que le copa ---------- */
+const likesOf = i => Array.isArray(i.likes) ? i.likes.filter(u=>(state.group?.members||[]).includes(u)) : [];
+function heartHtml(i){
+  const lk = likesOf(i), mine = lk.includes(state.me?.uid), info = state.group?.memberInfo || {};
+  const who = lk.map(u=>u===state.me?.uid ? "vos" : (info[u]?.name||"").split(" ")[0]).filter(Boolean).join(" y ");
+  return `<button type="button" class="heart ${mine?"on":""}" data-like="${esc(i.id)}" aria-pressed="${mine}" aria-label="${mine?"Sacar mi ♥":"Me copa"}${who?` (les copa a ${esc(who)})`:""}">${mine?"♥":"♡"}${lk.length?`<span class="hav">${lk.map(u=>`<i>${esc(initial(u===state.me?.uid ? state.me.name : info[u]?.name))}</i>`).join("")}</span>`:""}</button>`;
+}
+function toggleLike(id){
+  const it = state.items.find(x=>x.id===id); if(!it || !state.me) return;
+  const cur = Array.isArray(it.likes) ? it.likes : [], me = state.me.uid;
+  const likes = cur.includes(me) ? cur.filter(u=>u!==me) : cur.concat(me);
+  it.likes = likes; store.save(id, { likes }); render();
+}
+
+/* ---------- recuerdos: Hechos como álbum, por mes ---------- */
+function albumHtml(rows){
+  const months = new Map();
+  rows.forEach(i=>{
+    const d = new Date(i.doneAt || i.createdAt || Date.now());
+    const k = d.getFullYear()*100 + d.getMonth();
+    if(!months.has(k)) months.set(k, { label:d.toLocaleDateString("es-AR",{ month:"long", year:"numeric" }).replace(/^./, c=>c.toUpperCase()).replace(" de ", " "), items:[] });
+    months.get(k).items.push(i);
+  });
+  return [...months.values()].map(m=>`<li class="lsec">${esc(m.label)} · ${m.items.length}</li><li class="alb">${m.items.map(i=>`
+    <button type="button" class="acard" data-mem="${esc(i.id)}">
+      <span class="aimg" style="--cc:${listColor(i.list)}">${i.hasPhoto ? `<img data-ph="${esc(i.id)}" alt="">` : ""}<span class="acat">${esc(catOf(i.list).one)}</span></span>
+      <span class="at">${esc(i.title)}</span>
+      <span class="as">${i.rating ? `<span class="stars">${"★".repeat(i.rating)}</span> ` : ""}${i.doneAt ? esc(new Date(i.doneAt).toLocaleDateString("es-AR",{ day:"numeric", month:"short" })) : ""}${i.zona ? " · " + esc(i.zona) : ""}</span>
+    </button>`).join("")}</li>`).join("");
+}
+
+/* ---------- hoy y el finde: lo que ya tienen con fecha + una idea de Para descubrir ---------- */
+function findeDays(){
+  const t = todayStr(), days = [t];
+  weekendDays().forEach(d=>{ const k = ymd(d); if(!days.includes(k)) days.push(k); });
+  return days;
+}
+function findeIdea(){
+  const pool = discItems().filter(d=>discMatchesWhen(d, "finde") && !inMyList(d));
+  if(!pool.length) return null;
+  let d = pool.find(x=>x.id===state.findeIdea);
+  if(!d){ d = pool[Math.floor(Math.random()*pool.length)]; state.findeIdea = d.id; }
+  return d;
+}
+function renderFinde(show){
+  const box = $("finde");
+  if(!show || !state.loaded){ box.hidden = true; return; }
+  const days = findeDays(), t = todayStr();
+  const dayLbl = d => d===t ? "Hoy" : new Date(d+"T12:00:00").toLocaleDateString("es-AR",{ weekday:"short" }).replace(".","").replace(/^./, c=>c.toUpperCase());
+  const rows = state.items.filter(i=>!i.done && i.date && days.includes(i.date)).map(i=>({ k:i.date+(i.time||"99"), d:i.date, time:i.time, title:i.title, attr:`data-fitem="${esc(i.id)}"`, ic:"📅" }))
+    .concat(state.plans.filter(p=>p.date && days.includes(p.date)).map(p=>({ k:p.date+(p.time||"99"), d:p.date, time:p.time, title:p.title, attr:`data-fplan="${esc(p.id)}"`, ic:"🧭" })))
+    .sort((a,b)=>a.k.localeCompare(b.k));
+  const idea = findeIdea();
+  if(!rows.length && !idea){ box.hidden = true; return; }
+  const wd = new Date().getDay(), title = [5,6,0].includes(wd) ? "Este finde" : "Hoy y el finde";
+  const ideaDay = idea ? (weekendDays().find(x=>occursOn(idea, x))) : null;
+  box.hidden = false;
+  box.innerHTML = `<div class="fh"><b>${title}</b>${rows.length ? `<span>${rows.length} agendado${rows.length===1?"":"s"}</span>` : ""}</div>
+    ${rows.length ? rows.slice(0, 5).map(r=>`<button type="button" class="frow" ${r.attr}><span aria-hidden="true">${r.ic}</span><span class="fd">${esc(dayLbl(r.d))}${r.time?" "+esc(r.time):""}</span><span class="ft">${esc(r.title)}</span></button>`).join("")
+      + (rows.length>5 ? `<span class="hint">y ${rows.length-5} más en el Calendario</span>` : "")
+      : `<span class="hint">Nada agendado todavía. Poné día a algo de la lista o armá un plan.</span>`}
+    ${idea ? `<div class="fidea"><span class="fk">💡 Idea${ideaDay ? " · " + esc(dayLbl(ymd(ideaDay))) : ""}${idea.free ? " · gratis" : ""}</span>
+      <a href="${esc(safeUrl(idea.link))}" target="_blank" rel="noopener">${esc(idea.title)}</a>
+      <div class="fact"><button type="button" class="linkbtn" data-fother>Otra</button><button type="button" class="dadd" data-fadd>+ A mi lista</button></div></div>` : ""}`;
+}
+
 const photoCache = new Map();
+const hidePh = img => { const t = img.closest(".thumb"); if(t) t.hidden = true; else img.remove(); };
 function hydratePhotos(root){
   root.querySelectorAll("img[data-ph]").forEach(async img=>{
     const id = img.dataset.ph;
     try{
       if(!photoCache.has(id)) photoCache.set(id, store.getPhoto(id));
       const src = await photoCache.get(id);
-      if(src) img.src = src; else img.closest(".thumb").hidden = true;
-    }catch{ photoCache.delete(id); img.closest(".thumb").hidden = true; }
+      if(src) img.src = src; else hidePh(img);
+    }catch{ photoCache.delete(id); hidePh(img); }
   });
 }
 
@@ -548,22 +627,6 @@ function zonaGroups(){
     if(a.key===NOZONA) return 1; if(b.key===NOZONA) return -1;
     return b.items.filter(i=>!i.done).length - a.items.filter(i=>!i.done).length || a.name.localeCompare(b.name,"es");
   });
-}
-function renderZonas(){
-  const box = $("zonas");
-  if(!state.loaded){ box.innerHTML = `<div class="empty" style="grid-column:1/-1"><b>Cargando…</b></div>`; return; }
-  const groups = zonaGroups();
-  if(!groups.length){ box.innerHTML = `<div class="empty" style="grid-column:1/-1"><b>Todavía no hay barrios</b>Cuando agreguen algo con barrio o zona, acá se arma una colección por cada uno.</div>`; return; }
-  box.innerHTML = groups.map(g=>{
-    const pend = g.items.filter(i=>!i.done), done = g.items.length - pend.length;
-    const by = catKeys().map(k=>[k, catOf(k)]).map(([k,v])=>{ const n = pend.filter(i=>i.list===k).length; return n ? `${n} ${k==="actividad"?(n===1?"actividad":"actividades"):esc(v.label.toLowerCase())}` : ""; }).filter(Boolean).join(" · ");
-    return `<button type="button" class="zcard ${g.key===NOZONA?"none":""}" data-zona="${esc(g.key)}">
-      <b>${g.key===NOZONA?"":PIN}${esc(g.name)}</b>
-      <span class="zn">${pend.length} por hacer${done?` · ${done} hecho${done===1?"":"s"}`:""}</span>
-      ${by?`<span class="zc">${by}</span>`:""}
-      ${g.key===NOZONA?`<span class="zc">Pónganles barrio para ordenarlos</span>`:""}
-    </button>`;
-  }).join("");
 }
 function zonaSheet(key){
   let showDone = false;
@@ -600,7 +663,38 @@ function tiles(){ return L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}
 function marker(i){
   return L.circleMarker([i.lat, i.lng], { radius:i.done?7:10, color:"#ffffff", weight:2.5, fillColor:listColor(i.list), fillOpacity:i.done?.55:1 });
 }
+const zkey = i => i.zona && i.zona.trim() ? norm(i.zona) : NOZONA;
+const distM = (a, b) => { const R = 6371e3, r = x=>x*Math.PI/180, dLa = r(b.lat-a.lat), dLo = r(b.lng-a.lng);
+  const h = Math.sin(dLa/2)**2 + Math.cos(r(a.lat))*Math.cos(r(b.lat))*Math.sin(dLo/2)**2; return 2*R*Math.asin(Math.sqrt(h)); };
+const fmtDist = m => m < 1000 ? `${Math.max(50, Math.round(m/50)*50)} m` : `${(m/1000).toFixed(1).replace(".", ",")} km`;
+function findNear(){
+  if(!navigator.geolocation) return toast("Este celular no comparte la ubicación.");
+  $("nearBtn").textContent = "Buscando dónde estás…";
+  navigator.geolocation.getCurrentPosition(p=>{
+    state.near = { lat:p.coords.latitude, lng:p.coords.longitude }; state.mapZona = ""; state.mapFitted = true;
+    renderMap(); if(bigMap) bigMap.setView([state.near.lat, state.near.lng], 14);
+    $("nearBox").scrollIntoView({ block:"nearest", behavior:"smooth" });
+  }, ()=>{ toast("No pude saber dónde estás. Revisá el permiso de ubicación."); renderMap(); }, { enableHighAccuracy:true, timeout:12000, maximumAge:60000 });
+}
+function renderNear(){
+  const box = $("nearBox"), me = state.near;
+  $("nearBtn").textContent = "📍 ¿Qué tenemos cerca?";
+  $("nearBtn").hidden = !!me;
+  if(!me){ box.hidden = true; return; }
+  const close = state.items.filter(i=>!i.done && hasLoc(i) && !state.mapHidden.has(i.list))
+    .map(i=>({ i, d:distM(me, i) })).filter(x=>x.d <= 5000).sort((a,b)=>a.d-b.d).slice(0, 6);
+  box.hidden = false;
+  box.innerHTML = `<div class="fh"><b>Cerca tuyo</b><button type="button" class="linkbtn" data-nearoff>Cerrar</button></div>`
+    + (close.length ? close.map(({ i, d })=>`<button type="button" class="frow" data-near="${esc(i.id)}"><span class="dot" style="background:${listColor(i.list)}"></span><span class="ft">${esc(i.title)}<small>${esc([catOf(i.list).one, i.zona].filter(Boolean).join(" · "))}</small></span><span class="fd">${fmtDist(d)}</span></button>`).join("")
+      : `<span class="hint">No tienen nada por hacer a menos de 5 km. Probá con “Para descubrir”.</span>`);
+}
 function renderMap(){
+  const zg = zonaGroups().map(g=>({ ...g, n:g.items.filter(i=>state.mapShowDone || !i.done).length })).filter(g=>g.n);
+  if(state.mapZona && !zg.some(g=>g.key===state.mapZona)) state.mapZona = "";
+  $("zonaChips").hidden = !zg.length;
+  $("zonaChips").innerHTML = `<button type="button" class="fchip" data-mz="" aria-pressed="${!state.mapZona}">Todos los barrios</button>`
+    + zg.map(g=>`<button type="button" class="fchip" data-mz="${esc(g.key)}" aria-pressed="${state.mapZona===g.key}">${esc(g.name)} <b>${g.n}</b></button>`).join("");
+  renderNear();
   $("mapFilters").innerHTML =
     catKeys().filter(k=>state.items.some(i=>i.list===k && hasLoc(i)) || CORE.includes(k)).map(k=>`<button type="button" class="pill" data-ml="${esc(k)}" aria-pressed="${!state.mapHidden.has(k)}"><span class="dot" style="background:${listColor(k)}"></span>${esc(catOf(k).label)}</button>`).join("") +
     `<button type="button" class="pill" id="mlDone" aria-pressed="${state.mapShowDone}">Incluir hechos</button>`;
@@ -616,15 +710,19 @@ function renderMap(){
   }
   setTimeout(()=>bigMap.invalidateSize(), 60);
   bigLayer.clearLayers();
-  const visible = state.items.filter(i=>!state.mapHidden.has(i.list) && (state.mapShowDone || !i.done));
+  const visible = state.items.filter(i=>!state.mapHidden.has(i.list) && (state.mapShowDone || !i.done) && (!state.mapZona || zkey(i)===state.mapZona));
   const pts = visible.filter(hasLoc);
+  if(state.near) L.circleMarker([state.near.lat, state.near.lng], { radius:8, color:"#ffffff", weight:3, fillColor:"#378ADD", fillOpacity:1 }).bindPopup("Estás acá").addTo(bigLayer);
   pts.forEach(i=>{
     marker(i).bindPopup(`<div class="title">${esc(i.title)}</div>${i.zona?`<div class="note">${esc(i.zona)}</div>`:""}<div class="links" style="margin-top:6px">${linksHtml(i)}</div><button type="button" class="linkbtn" data-mapedit="${esc(i.id)}">Ver y editar →</button>`).addTo(bigLayer);
   });
   if(pts.length && !state.mapFitted){ bigMap.fitBounds(L.latLngBounds(pts.map(i=>[i.lat,i.lng])).pad(.2), { maxZoom:15 }); state.mapFitted = true; }
   const sin = visible.filter(i=>!hasLoc(i));
-  $("mapNote").innerHTML = `${pts.length} en el mapa` + (sin.length ? ` · ${sin.length} sin ubicar <button type="button" class="linkbtn" id="mapSin" style="display:inline">Ubicarlos</button>` : "");
+  const zg1 = state.mapZona && zg.find(g=>g.key===state.mapZona);
+  $("mapNote").innerHTML = `${pts.length} en el mapa` + (sin.length ? ` · ${sin.length} sin ubicar <button type="button" class="linkbtn" id="mapSin" style="display:inline">Ubicarlos</button>` : "")
+    + (zg1 ? ` · <button type="button" class="linkbtn" id="mapZList" style="display:inline">Ver la lista de ${esc(zg1.name)}</button>` : "");
   if($("mapSin")) $("mapSin").onclick = ()=>sinUbicarSheet();
+  if($("mapZList")) $("mapZList").onclick = ()=>zonaSheet(state.mapZona);
 }
 function sinUbicarSheet(){
   const sin = state.items.filter(i=>!hasLoc(i) && !state.mapHidden.has(i.list) && (state.mapShowDone || !i.done));
@@ -1323,12 +1421,20 @@ function doneSheet(item){
   };
 }
 
+/* un recuerdo: foto, puntaje, fecha y lo que escribieron */
 function photoSheet(item){
-  openSheet(`<h2>${esc(item.title)}</h2><img class="bigimg" data-ph="${esc(item.id)}" alt="Foto de ${esc(item.title)}">
-    ${item.memory?`<div class="memory" style="margin-top:0">${esc(item.memory)}</div>`:""}
-    <div class="row"><button type="button" class="btn ghost" id="phClose">Cerrar</button></div>`);
+  const sub = [catOf(item.list).one, item.zona, item.doneAt ? fmtDate(item.doneAt) : ""].filter(Boolean).join(" · ");
+  openSheet(`<h2>${esc(item.title)}</h2>
+    <div class="note" style="margin-top:-8px">${esc(sub)}${item.rating ? ` · <span class="stars">${starsTxt(item.rating)}</span>` : ""}</div>
+    ${item.hasPhoto ? `<img class="bigimg" data-ph="${esc(item.id)}" alt="Foto de ${esc(item.title)}">` : ""}
+    ${item.memory ? `<div class="memory" style="margin-top:0">${esc(item.memory)}</div>` : `<span class="hint">Todavía no tiene recuerdo ni foto.</span>`}
+    <div class="row"><button type="button" class="btn ghost" id="phClose">Cerrar</button><button type="button" class="btn primary" id="phEdit">${item.hasPhoto || item.memory ? "Editar recuerdo" : "Sumar foto o recuerdo"}</button></div>
+    <div class="row"><button type="button" class="linkbtn" id="phMore" style="text-align:center">Ver todo y editar</button>${item.done ? `<button type="button" class="linkbtn" id="phUndo" style="text-align:center">Volver a Por hacer</button>` : ""}</div>`);
   hydratePhotos($("sheet"));
   $("phClose").onclick = closeSheet;
+  if($("phUndo")) $("phUndo").onclick = ()=>{ store.save(item.id, { done:false, doneAt:0 }); closeSheet(); toast("Volvió a Por hacer"); };
+  $("phEdit").onclick = ()=>doneSheet(item);
+  $("phMore").onclick = ()=>itemForm(item);
 }
 
 /* ---------- para descubrir: propuestas que junta el robot de GitHub todos los días ---------- */
@@ -1336,7 +1442,7 @@ let discData = null, discLoading = null;
 function loadDisc(){
   if(discLoading) return discLoading;
   discLoading = fetch("data/descubrir.json", { cache:"no-cache" }).then(r=>r.ok ? r.json() : null).catch(()=>null)
-    .then(d=>{ discData = d; discLoading = null; paintDiscBtn(); return d; });
+    .then(d=>{ discData = d; discLoading = null; paintDiscBtn(); renderFinde(!$("vMain").hidden && state.view==="pend" && !state.selecting); return d; });
   return discLoading;
 }
 const discItems = () => discData ? Object.values(discData.sources || {}).flatMap(s=>s.items || []) : [];
@@ -1419,14 +1525,24 @@ const dayTitle = date => {
   return diff===0 ? "Hoy · " + s : diff===1 ? "Mañana · " + s : s.charAt(0).toUpperCase() + s.slice(1);
 };
 const inMyList = d => state.items.some(i=>i.link && d.link && i.link===d.link);
+/* fecha para el Calendario: solo si la propuesta es de un día puntual (o de pocos días), no una muestra de un mes */
+function discDate(d){
+  const sc = schedOf(d);
+  if(sc.recurring) return null;
+  if(sc.ranges.some(([a,b])=>(b - a) > 4*864e5)) return null;
+  const nd = nextDate(d);
+  return nd ? { date:ymd(nd), time:sc.time || "" } : null;
+}
 function addDisc(d){
   if(!state.gid || !state.me) return false;
   const note = [d.when, d.place].filter(Boolean).join(" · ").slice(0, 400);
+  const when = discDate(d);
   store.save(store.newId(), { list:d.cat || "actividad", title:d.title.slice(0, 120), note, zona:(d.zona||"").slice(0, 60),
     tags: d.free ? ["Gratis"] : [], link:d.link, maps:"", price:0,
     lat: typeof d.lat==="number" ? d.lat : null, lng: typeof d.lng==="number" ? d.lng : null,
+    date: when ? when.date : "", time: when ? when.time : "",
     done:false, rating:0, doneAt:0, memory:"", hasPhoto:false, createdAt:Date.now(), createdBy:state.me.uid });
-  toast(`Agregado a “${state.group?.name || "tu lista"}”`);
+  toast(`Agregado a “${state.group?.name || "tu lista"}”` + (when ? ` · ${when.date===todayStr() ? "hoy" : fmtDay(when.date)}${when.time ? " " + when.time : ""} en el Calendario` : ""));
   return true;
 }
 function discSheet(){
@@ -1631,7 +1747,11 @@ $("doneSw").addEventListener("click", e=>{ const b = e.target.closest("[data-dv]
   if(!has(state.tab)){ const k = catKeys().find(has); if(k) state.tab = k; }   // si la categoría abierta está vacía, salta a una que tenga algo
   render();
 } });
-document.querySelectorAll(".seg [data-view]").forEach(b=>b.onclick=()=>{ state.view = b.dataset.view; render(); b.scrollIntoView({ inline:"nearest", block:"nearest" }); });
+document.querySelectorAll(".bnav [data-view]").forEach(b=>b.onclick=()=>{
+  const was = state.view; state.view = b.dataset.view;
+  if(b.dataset.view==="pend" && ["pend","done","planes"].includes(was) && was!=="pend") state.view = was;   // ya estás en Para hacer: no cambia la sub-vista
+  render(); window.scrollTo(0, 0);
+});
 $("tabs").addEventListener("click", e=>{ const b=e.target.closest("[data-tab]"); if(b){ state.tab=b.dataset.tab; if(state.q){ state.q=""; $("q").value=""; } render(); } });
 let qTimer; $("q").addEventListener("input", e=>{ clearTimeout(qTimer); qTimer = setTimeout(()=>{ state.q = e.target.value.trim(); render(); }, 150); });
 $("filters").addEventListener("change", e=>{ if(e.target.id==="fZona"){ state.zona = e.target.value; render(); } });
@@ -1640,7 +1760,24 @@ $("filters").addEventListener("click", e=>{
   if(t){ state.tag = norm(state.tag)===norm(t.dataset.tagf) ? "" : t.dataset.tagf; render(); return; }
   if(e.target.closest("#fClear")){ state.zona=""; state.tag=""; state.q=""; $("q").value=""; render(); }
 });
-$("zonas").addEventListener("click", e=>{ const b = e.target.closest("[data-zona]"); if(b) zonaSheet(b.dataset.zona); });
+$("zonaChips").addEventListener("click", e=>{
+  const b = e.target.closest("[data-mz]"); if(!b) return;
+  const k = b.dataset.mz;
+  if(k===NOZONA) return zonaSheet(k);   // sin barrio no tiene lugar en el mapa: se abre la lista
+  state.mapZona = state.mapZona===k ? "" : k; state.mapFitted = false; state.near = null; renderMap();
+});
+$("nearBtn").onclick = findNear;
+$("nearBox").addEventListener("click", e=>{
+  if(e.target.closest("[data-nearoff]")){ state.near = null; state.mapFitted = false; return renderMap(); }
+  const b = e.target.closest("[data-near]"); if(!b) return;
+  const it = state.items.find(x=>x.id===b.dataset.near); if(it) itemForm(it);
+});
+$("finde").addEventListener("click", e=>{
+  const fi = e.target.closest("[data-fitem]"); if(fi){ const it = state.items.find(x=>x.id===fi.dataset.fitem); if(it) itemForm(it); return; }
+  const fp = e.target.closest("[data-fplan]"); if(fp){ const p = state.plans.find(x=>x.id===fp.dataset.fplan); if(p) planSheet(p); return; }
+  if(e.target.closest("[data-fother]")){ const cur = state.findeIdea; state.findeIdea = ""; const pool = discItems().filter(d=>discMatchesWhen(d,"finde") && !inMyList(d) && d.id!==cur); if(pool.length) state.findeIdea = pool[Math.floor(Math.random()*pool.length)].id; return render(); }
+  if(e.target.closest("[data-fadd]")){ const d = findeIdea(); if(d && addDisc(d)){ state.findeIdea = ""; setTimeout(render, 50); } }
+});
 $("mapFilters").addEventListener("click", e=>{
   const b = e.target.closest("[data-ml]");
   if(b){ const k = b.dataset.ml; state.mapHidden.has(k) ? state.mapHidden.delete(k) : state.mapHidden.add(k); renderMap(); return; }
@@ -1676,8 +1813,10 @@ $("list").addEventListener("click", e=>{
     if(state.sel.has(id)) state.sel.delete(id); else if(state.sel.size < 30) state.sel.add(id); else toast("Un plan puede tener hasta 30 paradas.");
     return render();
   }
-  const ph = e.target.closest("[data-photo]");
-  if(ph){ const it = state.items.find(i=>i.id===ph.dataset.photo); if(it) photoSheet(it); return; }
+  const lk = e.target.closest("[data-like]");
+  if(lk) return toggleLike(lk.dataset.like);
+  const ph = e.target.closest("[data-photo],[data-mem]");
+  if(ph){ const it = state.items.find(i=>i.id===(ph.dataset.photo || ph.dataset.mem)); if(it) photoSheet(it); return; }
   const c = e.target.closest("[data-check]"), ed = e.target.closest("[data-edit]");
   if(!c && !ed) return;
   const item = state.items.find(i=>i.id===(c||ed).dataset[c?"check":"edit"]);
