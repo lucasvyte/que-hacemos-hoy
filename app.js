@@ -17,8 +17,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.8.0";
+const VERSION = "0.9.0";
 const CHANGELOG = [
+  ["0.9.0","Más categorías además de Actividades, Para comer y Para visitar: Música, Cine, Teatro, Bares y Deporte, y podés crear las tuyas con “+ Otra”."],
   ["0.8.0","Al agregar algo, barrio, ubicación y mapa están juntos en “Dónde”: buscás el lugar o pegás un link de Maps y se pone el pin y el barrio solos."],
   ["0.7.1","Cambiar el nombre de la lista es más fácil: tocás el nombre arriba y lo editás ahí mismo."],
   ["0.7.0","Calendario: todos tus planes de todas tus listas (privadas y compartidas) en un mes, con los días marcados. Tocás un plan y se abre, aunque sea de otra lista."],
@@ -37,8 +38,21 @@ const CHANGELOG = [
 const LISTS = {
   actividad:{label:"Actividades", one:"Actividad"},
   comer:{label:"Para comer", one:"Para comer"},
-  visitar:{label:"Para visitar", one:"Para visitar"}
+  visitar:{label:"Para visitar", one:"Para visitar"},
+  musica:{label:"Música", one:"Música"},
+  cine:{label:"Cine", one:"Cine"},
+  teatro:{label:"Teatro", one:"Teatro"},
+  bares:{label:"Bares", one:"Bar"},
+  deporte:{label:"Deporte", one:"Deporte"}
 };
+const CORE = ["actividad","comer","visitar"];   // siempre visibles; las demás aparecen cuando tienen algo
+/* categoría propia: se guarda como "c:Nombre" */
+const catOf = k => LISTS[k] || (String(k||"").startsWith("c:") ? { label:k.slice(2), one:k.slice(2) } : LISTS.actividad);
+function catKeys(...extra){
+  const used = new Set(state.items.map(i=>i.list).filter(Boolean).concat(extra.filter(Boolean)));
+  return Object.keys(LISTS).filter(k=>CORE.includes(k) || used.has(k))
+    .concat([...used].filter(k=>!LISTS[k] && String(k).startsWith("c:")).sort((a,b)=>a.localeCompare(b,"es")));
+}
 const BASE_TAGS = ["Día de lluvia","Aniversario","Con amigos","Al aire libre","Romántico","Para el finde"];
 const BA = [-34.6037, -58.3816];
 const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
@@ -46,7 +60,7 @@ const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const MAX_MEMBERS = 10;   // tiene que coincidir con maxMembers() en firestore.rules
 const state = { items:[], plans:[], lists:[], plansLoaded:false, calPlans:{}, calMonth:"", calDay:"", pendingPlan:null, tab:"actividad", view:"pend", q:"", zona:"", tag:"",
   me:null, group:null, gid:null, loaded:false, lastPick:null, share:null, installEvt:null,
-  mapShowDone:false, mapLists:new Set(Object.keys(LISTS)), mapFitted:false };
+  mapShowDone:false, mapHidden:new Set(), mapFitted:false };
 const $ = id => document.getElementById(id);
 
 /* ---------- utilidades ---------- */
@@ -62,7 +76,13 @@ const hasLoc = i => typeof i.lat === "number" && typeof i.lng === "number";
 const hostOf = u => { try{ return new URL(u).hostname.replace(/^www\./,""); }catch{ return ""; } };
 const isIG = u => /(^|\.)instagram\.com$/.test(hostOf(u)) || hostOf(u)==="instagr.am";
 const isMaps = u => { const h = hostOf(u); return h==="maps.app.goo.gl" || h==="goo.gl" || (/(^|\.)google\.[a-z.]+$/.test(h) && /\/maps/.test(u)) || /^maps\.google\./.test(h); };
-const listColor = k => getComputedStyle(document.documentElement).getPropertyValue("--c-"+k).trim() || "#2F7D5B";
+const EXTRA_COLORS = ["#8E5BB5","#C2477E","#3A9C9C","#B8862B","#5B6FC2","#7A8B3A"];
+const listColor = k => {
+  const v = LISTS[k] ? getComputedStyle(document.documentElement).getPropertyValue("--c-"+k).trim() : "";
+  if(v) return v;
+  let h = 0; for(const c of String(k||"")) h = (h*31 + c.charCodeAt(0)) >>> 0;
+  return EXTRA_COLORS[h % EXTRA_COLORS.length];
+};
 const PIN = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><path d="M12 21s-7-6.2-7-11.5A7 7 0 0 1 19 9.5C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>`;
 const IGICON = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M10 8.5v7l6-3.5z" fill="currentColor" stroke="none"/></svg>`;
 const CHECK = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 12l5 5L19 7"/></svg>`;
@@ -400,7 +420,7 @@ function renderFilters(){
 function itemMeta(i, opts={}){
   const by = (state.group && state.group.memberInfo && state.group.memberInfo[i.createdBy] || {}).name || "";
   return [
-    opts.showList ? `<span class="zone" style="font-weight:500"><span class="dot" style="background:${listColor(i.list)}"></span>${esc(LISTS[i.list]?.label||"")}</span>` : "",
+    opts.showList ? `<span class="zone" style="font-weight:500"><span class="dot" style="background:${listColor(i.list)}"></span>${esc(catOf(i.list).label)}</span>` : "",
     i.zona ? `<span class="zone">${PIN}${esc(i.zona)}</span>` : "",
     priceHtml(i.price),
     ...tagsOf(i).map(t=>`<span class="tag">${esc(t)}</span>`),
@@ -433,10 +453,13 @@ function render(){
   if(state.view==="calendario") return renderCal();
 
   const showDone = state.view==="done", searching = !!state.q;
-  $("tabs").innerHTML = Object.entries(LISTS).map(([k,v])=>{
+  if(!catKeys().includes(state.tab)) state.tab = "actividad";
+  $("tabs").innerHTML = catKeys(state.tab).map(k=>[k, catOf(k)]).map(([k,v])=>{
     const n = state.items.filter(i=>i.list===k && !i.done).length;
-    return `<button class="tab" role="tab" type="button" data-tab="${k}" aria-selected="${!searching && state.tab===k}">${v.label}<small>${n} pendiente${n===1?"":"s"}</small></button>`;
+    return `<button class="tab" role="tab" type="button" data-tab="${esc(k)}" aria-selected="${!searching && state.tab===k}">${esc(v.label)}<small>${n} pendiente${n===1?"":"s"}</small></button>`;
   }).join("");
+  const selTab = $("tabs").querySelector('[aria-selected="true"]'), tb = $("tabs");
+  if(selTab && (selTab.offsetLeft < tb.scrollLeft || selTab.offsetLeft + selTab.offsetWidth > tb.scrollLeft + tb.clientWidth)) tb.scrollLeft = selTab.offsetLeft - 8;
   renderFilters();
 
   const rows = state.items.filter(i=>(searching || i.list===state.tab) && !!i.done===showDone && matches(i))
@@ -500,7 +523,7 @@ function renderZonas(){
   if(!groups.length){ box.innerHTML = `<div class="empty" style="grid-column:1/-1"><b>Todavía no hay barrios</b>Cuando agreguen algo con barrio o zona, acá se arma una colección por cada uno.</div>`; return; }
   box.innerHTML = groups.map(g=>{
     const pend = g.items.filter(i=>!i.done), done = g.items.length - pend.length;
-    const by = Object.entries(LISTS).map(([k,v])=>{ const n = pend.filter(i=>i.list===k).length; return n ? `${n} ${k==="actividad"?(n===1?"actividad":"actividades"):v.label.toLowerCase()}` : ""; }).filter(Boolean).join(" · ");
+    const by = catKeys().map(k=>[k, catOf(k)]).map(([k,v])=>{ const n = pend.filter(i=>i.list===k).length; return n ? `${n} ${k==="actividad"?(n===1?"actividad":"actividades"):esc(v.label.toLowerCase())}` : ""; }).filter(Boolean).join(" · ");
     return `<button type="button" class="zcard ${g.key===NOZONA?"none":""}" data-zona="${esc(g.key)}">
       <b>${g.key===NOZONA?"":PIN}${esc(g.name)}</b>
       <span class="zn">${pend.length} pendiente${pend.length===1?"":"s"}${done?` · ${done} hecho${done===1?"":"s"}`:""}</span>
@@ -515,7 +538,7 @@ function zonaSheet(key){
     const g = zonaGroups().find(x=>x.key===key);
     if(!g){ closeSheet(); return; }
     const rows = g.items.filter(i=>!!i.done===showDone).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
-    const secs = Object.entries(LISTS).map(([k,v])=>{
+    const secs = catKeys().map(k=>[k, catOf(k)]).map(([k,v])=>{
       const r = rows.filter(i=>i.list===k);
       if(!r.length) return "";
       return `<div class="sec">${v.label}</div>` + r.map(i=>{
@@ -546,7 +569,7 @@ function marker(i){
 }
 function renderMap(){
   $("mapFilters").innerHTML =
-    Object.entries(LISTS).map(([k,v])=>`<button type="button" class="pill" data-ml="${k}" aria-pressed="${state.mapLists.has(k)}"><span class="dot" style="background:${listColor(k)}"></span>${v.label}</button>`).join("") +
+    catKeys().filter(k=>state.items.some(i=>i.list===k && hasLoc(i)) || CORE.includes(k)).map(k=>`<button type="button" class="pill" data-ml="${esc(k)}" aria-pressed="${!state.mapHidden.has(k)}"><span class="dot" style="background:${listColor(k)}"></span>${esc(catOf(k).label)}</button>`).join("") +
     `<button type="button" class="pill" id="mlDone" aria-pressed="${state.mapShowDone}">Incluir hechos</button>`;
   if(!window.L){ $("mapNote").textContent = "El mapa necesita conexión a internet para cargar."; return; }
   if(!bigMap){
@@ -560,7 +583,7 @@ function renderMap(){
   }
   setTimeout(()=>bigMap.invalidateSize(), 60);
   bigLayer.clearLayers();
-  const visible = state.items.filter(i=>state.mapLists.has(i.list) && (state.mapShowDone || !i.done));
+  const visible = state.items.filter(i=>!state.mapHidden.has(i.list) && (state.mapShowDone || !i.done));
   const pts = visible.filter(hasLoc);
   pts.forEach(i=>{
     marker(i).bindPopup(`<div class="title">${esc(i.title)}</div>${i.zona?`<div class="note">${esc(i.zona)}</div>`:""}<div class="links" style="margin-top:6px">${linksHtml(i)}</div><button type="button" class="linkbtn" data-mapedit="${esc(i.id)}">Ver y editar →</button>`).addTo(bigLayer);
@@ -571,9 +594,9 @@ function renderMap(){
   if($("mapSin")) $("mapSin").onclick = ()=>sinUbicarSheet();
 }
 function sinUbicarSheet(){
-  const sin = state.items.filter(i=>!hasLoc(i) && state.mapLists.has(i.list) && (state.mapShowDone || !i.done));
+  const sin = state.items.filter(i=>!hasLoc(i) && !state.mapHidden.has(i.list) && (state.mapShowDone || !i.done));
   openSheet(`<h2>Sin ubicar</h2><p class="hint" style="margin:-6px 0 0">Tocá uno para ponerle su lugar en el mapa.</p>
-    ${sin.map(i=>`<button type="button" class="mini" data-sin="${esc(i.id)}"><span class="title">${esc(i.title)}</span><span class="note">${esc([LISTS[i.list]?.one, i.zona].filter(Boolean).join(" · "))}</span></button>`).join("")}
+    ${sin.map(i=>`<button type="button" class="mini" data-sin="${esc(i.id)}"><span class="title">${esc(i.title)}</span><span class="note">${esc([catOf(i.list).one, i.zona].filter(Boolean).join(" · "))}</span></button>`).join("")}
     <div class="row"><button type="button" class="btn ghost" id="sClose">Cerrar</button></div>`);
   $("sClose").onclick = closeSheet;
   $("sheet").querySelectorAll("[data-sin]").forEach(b=>b.onclick=()=>{ const it = state.items.find(x=>x.id===b.dataset.sin); if(it) itemForm(it, { openMap:true }); });
@@ -668,7 +691,7 @@ function planSheet(plan, preStop, preDate){
   const paintStops = ()=>{
     $("plStops").innerHTML = stops.length ? stops.map((id, n)=>{
       const i = byId(id);
-      const sub = i ? [LISTS[i.list]?.one, i.zona, hasLoc(i) ? "" : "sin ubicar", i.done ? "ya lo hicieron" : ""].filter(Boolean).join(" · ") : "Lo borraron de la lista";
+      const sub = i ? [catOf(i.list).one, i.zona, hasLoc(i) ? "" : "sin ubicar", i.done ? "ya lo hicieron" : ""].filter(Boolean).join(" · ") : "Lo borraron de la lista";
       return `<li class="stop ${i?"":"gone"}"><span class="num">${n+1}</span>
         <div class="body"><div class="title">${esc(i ? i.title : "Parada borrada")}</div><div class="note">${esc(sub)}</div></div>
         <div class="sbtns"><button type="button" data-up="${n}" aria-label="Subir" ${n===0?"disabled":""}>↑</button><button type="button" data-down="${n}" aria-label="Bajar" ${n===stops.length-1?"disabled":""}>↓</button><button type="button" data-rm="${n}" aria-label="Quitar">✕</button></div></li>`;
@@ -681,7 +704,7 @@ function planSheet(plan, preStop, preDate){
     const q = norm($("plQ").value);
     const cand = state.items.filter(i=>!stops.includes(i.id) && (!q || norm([i.title, i.zona, i.note].join(" ")).includes(q)))
       .sort((a,b)=>(a.done?1:0)-(b.done?1:0) || (b.createdAt||0)-(a.createdAt||0)).slice(0, 60);
-    $("plPickList").innerHTML = cand.length ? cand.map(i=>`<button type="button" class="mini ${i.done?"is-done":""}" data-pk="${esc(i.id)}"><span class="title">${esc(i.title)}</span><span class="note">${esc([LISTS[i.list]?.one, i.zona, hasLoc(i)?"":"sin ubicar"].filter(Boolean).join(" · "))}</span></button>`).join("")
+    $("plPickList").innerHTML = cand.length ? cand.map(i=>`<button type="button" class="mini ${i.done?"is-done":""}" data-pk="${esc(i.id)}"><span class="title">${esc(i.title)}</span><span class="note">${esc([catOf(i.list).one, i.zona, hasLoc(i)?"":"sin ubicar"].filter(Boolean).join(" · "))}</span></button>`).join("")
       : `<span class="hint">${state.items.length ? "No hay más para sumar con esa búsqueda." : "La lista está vacía: primero agregá lugares."}</span>`;
   };
   $("plStops").onclick = e=>{
@@ -851,7 +874,9 @@ function itemForm(item, pre={}){
     <h2>${item?"Editar":pre.fromShare?"Guardar lo compartido":"Agregar"}</h2>
     <form id="itemForm" style="display:flex;flex-direction:column;gap:14px">
       ${!item && state.lists.length>1 ? `<label>Guardar en<select id="fGid">${state.lists.map(l=>`<option value="${esc(l.id)}" ${l.id===state.gid?"selected":""}>${l.private?"🔒 ":""}${esc(l.name||"Lista")}</option>`).join("")}</select></label>` : ""}
-      <div class="pills" role="group" aria-label="Lista">${Object.entries(LISTS).map(([k,v])=>`<button type="button" class="pill" data-list="${k}" aria-pressed="${list===k}"><span class="dot" style="background:${listColor(k)}"></span>${v.one}</button>`).join("")}</div>
+      <div class="lbl">Qué tipo
+        <div class="pills" role="group" aria-label="Categoría" id="catPills"></div>
+        <div class="addtag" id="catNewBox" hidden><input id="catNew" type="text" maxlength="28" placeholder="Ej.: Ferias, Museos, Shows" aria-label="Nueva categoría"><button type="button" id="catNewOk">Crear</button></div></div>
       <div class="lbl capbox">
         <button type="button" class="linkbtn" id="capOpen" ${pre.fromShare?"hidden":""}>📋 Completar con la descripción del reel</button>
         <div id="capPanel" ${pre.fromShare?"":"hidden"} style="display:flex;flex-direction:column;gap:8px">
@@ -901,8 +926,25 @@ function itemForm(item, pre={}){
   $("fAddTag").onclick = addTag;
   $("fNewTag").addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); addTag(); } });
   let listTouched = false;
-  const pickList = k=>{ list=k; sh.querySelectorAll("[data-list]").forEach(x=>x.setAttribute("aria-pressed", x.dataset.list===k)); if(pin) pin.setStyle({ fillColor:listColor(list) }); };
-  sh.querySelectorAll("[data-list]").forEach(b=>b.onclick=()=>{ listTouched = true; list=b.dataset.list; sh.querySelectorAll("[data-list]").forEach(x=>x.setAttribute("aria-pressed", x===b)); if(pin) pin.setStyle({ fillColor:listColor(list) }); });
+  const allCats = ()=>Object.keys(LISTS).concat(catKeys(list).filter(k=>!LISTS[k]));
+  const paintCats = ()=>{
+    $("catPills").innerHTML = allCats().map(k=>`<button type="button" class="pill" data-list="${esc(k)}" aria-pressed="${list===k}"><span class="dot" style="background:${listColor(k)}"></span>${esc(catOf(k).one)}</button>`).join("")
+      + `<button type="button" class="pill" id="catAdd">+ Otra</button>`;
+    $("catAdd").onclick = ()=>{ $("catNewBox").hidden = false; $("catNew").focus(); };
+  };
+  const pickList = k=>{ list=k; paintCats(); if(pin) pin.setStyle({ fillColor:listColor(list) }); };
+  paintCats();
+  $("catPills").addEventListener("click", e=>{ const b = e.target.closest("[data-list]"); if(b){ listTouched = true; pickList(b.dataset.list); } });
+  const newCat = ()=>{
+    const name = $("catNew").value.trim().replace(/\s+/g," ").slice(0,28);
+    if(!name) return;
+    const builtin = Object.keys(LISTS).find(k=>norm(LISTS[k].label)===norm(name) || norm(LISTS[k].one)===norm(name));
+    const existing = catKeys().find(k=>k.startsWith("c:") && norm(k.slice(2))===norm(name));
+    listTouched = true; pickList(builtin || existing || "c:" + name);
+    $("catNew").value = ""; $("catNewBox").hidden = true;
+  };
+  $("catNewOk").onclick = newCat;
+  $("catNew").addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); newCat(); } });
   sh.querySelectorAll("[data-price]").forEach(b=>b.onclick=()=>{ price=+b.dataset.price; sh.querySelectorAll("[data-price]").forEach(x=>x.setAttribute("aria-pressed", x===b)); });
 
   /* links */
@@ -1007,7 +1049,7 @@ function itemForm(item, pre={}){
     const r = parseCaption(txt, zonas), done = [];
     if(r.zona && canFill("fZonaIn","zona")){ $("fZonaIn").value = auto.zona = r.zona; zonaAuto = ""; locTxt(); done.push("barrio " + r.zona); }
     if(r.name && canFill("fTitle","title")){ $("fTitle").value = auto.title = r.name; done.push("nombre"); }
-    if(r.list && !item && !listTouched && r.list !== list){ pickList(r.list); done.push(LISTS[r.list].label.toLowerCase()); }
+    if(r.list && !item && !listTouched && r.list !== list){ pickList(r.list); done.push(catOf(r.list).label.toLowerCase()); }
     h.hidden = false;
     h.textContent = done.length ? "Completé: " + done.join(" · ") + ". Revisalo." : "No encontré barrio ni nombre. Completalo a mano.";
     if(r.address && (!loc || locAuto) && navigator.onLine !== false){
@@ -1061,7 +1103,7 @@ function itemForm(item, pre={}){
     }
     state.mapFitted = false;
     const other = gid!==state.gid && state.lists.find(l=>l.id===gid);
-    closeSheet(); render(); toast(item ? "Guardado" : other ? `Agregado a “${other.name}”` : "Agregado a " + LISTS[list].label);
+    closeSheet(); render(); toast(item ? "Guardado" : other ? `Agregado a “${other.name}”` : "Agregado a " + catOf(list).label);
   };
 }
 
@@ -1146,7 +1188,7 @@ function pickSheet(){
   const zonas = allZonas(), tags = uniq([].concat(...state.items.filter(i=>!i.done).map(tagsOf)));
   openSheet(`
     <h2>¿Qué hacemos hoy?</h2>
-    <div class="pills" role="group" aria-label="Qué tipo">${[["todo","Cualquier cosa"],...Object.entries(LISTS).map(([k,v])=>[k,v.label])].map(([k,l])=>`<button type="button" class="pill" data-f="${k}" aria-pressed="${k==="todo"}">${l}</button>`).join("")}</div>
+    <div class="pills" role="group" aria-label="Qué tipo">${[["todo","Cualquier cosa"],...catKeys().map(k=>[k,catOf(k).label])].map(([k,l])=>`<button type="button" class="pill" data-f="${esc(k)}" aria-pressed="${k==="todo"}">${esc(l)}</button>`).join("")}</div>
     <div class="pills" role="group" aria-label="Precio máximo">${[[1,"Barato"],[2,"Hasta $$"],[3,"Sin límite"]].map(([p,l])=>`<button type="button" class="pill" data-m="${p}" aria-pressed="${p===3}">${l}</button>`).join("")}</div>
     ${zonas.length||tags.length ? `<div class="pickf">
       ${zonas.length?`<select id="pZona" aria-label="Zona"><option value="">Cualquier zona</option>${zonas.map(z=>`<option value="${esc(z)}">${esc(z)}</option>`).join("")}</select>`:""}
@@ -1163,7 +1205,7 @@ function pickSheet(){
     if(!pool.length){ box.innerHTML = `<div class="t">Nada que coincida</div><div class="n">Probá con otro filtro o agreguen más cosas a la lista.</div>`; return; }
     const p = pool[Math.floor(Math.random()*pool.length)]; state.lastPick = p.id;
     const links = linksHtml(p);
-    const k = [LISTS[p.list]?.one, p.zona, p.price ? "$".repeat(p.price) : ""].filter(Boolean).map(esc).join(" · ");
+    const k = [catOf(p.list).one, p.zona, p.price ? "$".repeat(p.price) : ""].filter(Boolean).map(esc).join(" · ");
     box.innerHTML = `<div class="k">${k}</div><div class="t">${esc(p.title)}</div>${p.note?`<div class="n">${esc(p.note)}</div>`:""}${links?`<div class="links">${links}</div>`:""}`;
   };
   sh.querySelectorAll("[data-f]").forEach(b=>b.onclick=()=>{ filter=b.dataset.f; sh.querySelectorAll("[data-f]").forEach(x=>x.setAttribute("aria-pressed",x===b)); roll(); });
@@ -1266,7 +1308,7 @@ $("filters").addEventListener("click", e=>{
 $("zonas").addEventListener("click", e=>{ const b = e.target.closest("[data-zona]"); if(b) zonaSheet(b.dataset.zona); });
 $("mapFilters").addEventListener("click", e=>{
   const b = e.target.closest("[data-ml]");
-  if(b){ const k = b.dataset.ml; state.mapLists.has(k) ? state.mapLists.delete(k) : state.mapLists.add(k); renderMap(); return; }
+  if(b){ const k = b.dataset.ml; state.mapHidden.has(k) ? state.mapHidden.delete(k) : state.mapHidden.add(k); renderMap(); return; }
   if(e.target.closest("#mlDone")){ state.mapShowDone = !state.mapShowDone; renderMap(); }
 });
 $("heroBtn").onclick = pickSheet;
