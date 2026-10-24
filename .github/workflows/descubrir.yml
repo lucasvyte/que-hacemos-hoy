@@ -1,0 +1,26 @@
+name: Para descubrir (propuestas del día)
+on:
+  schedule:
+    - cron: "17 9 * * *"     # todos los días 6:17 de Argentina
+  workflow_dispatch:
+  push:
+    paths: ["tools/descubrir.mjs", ".github/workflows/descubrir.yml"]
+permissions:
+  contents: write
+concurrency: { group: descubrir, cancel-in-progress: false }
+jobs:
+  descubrir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: node tools/descubrir.mjs
+      - run: |
+          git config user.name "robot-descubrir"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/descubrir.json
+          git diff --cached --quiet && exit 0
+          git commit -m "Para descubrir: propuestas del día [skip ci]"
+          git pull --rebase -q && git push
