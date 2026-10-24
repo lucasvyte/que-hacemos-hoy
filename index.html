@@ -82,14 +82,15 @@
       <button type="button" data-view="pend" aria-pressed="true">Para hacer</button>
       <button type="button" data-view="zonas" aria-pressed="false">Barrios</button>
       <button type="button" data-view="mapa" aria-pressed="false">Mapa</button>
-      <button type="button" data-view="planes" aria-pressed="false">Planes</button>
       <button type="button" data-view="calendario" aria-pressed="false">Calendario</button>
     </div>
 
     <div class="donesw" id="doneSw" role="group" aria-label="Mostrar">
       <button type="button" data-dv="pend" aria-pressed="true">Por hacer <b id="nPend"></b></button>
       <button type="button" data-dv="done" aria-pressed="false">✓ Hechos <b id="nDone"></b></button>
+      <button type="button" data-dv="planes" aria-pressed="false">Planes <b id="nPlans"></b></button>
     </div>
+    <button type="button" class="juntar" id="juntarBtn">🧩 Juntar ideas y armar un plan</button>
     <div class="tabs" role="tablist" id="tabs"></div>
 
     <div class="tools" id="tools">
@@ -122,6 +123,10 @@
   </section>
 </div>
 
+<div class="selbar" id="selBar" hidden>
+  <button type="button" class="btn ghost" id="selCancel">Cancelar</button>
+  <button type="button" class="btn primary" id="selGo">Armar plan</button>
+</div>
 <button class="fab" id="addBtn" type="button" hidden><span aria-hidden="true" style="font-size:1.3rem;line-height:1">+</span> <span id="addLbl">Agregar</span></button>
 <div class="toast" id="toast" role="status" hidden></div>
 <div class="scrim" id="scrim" hidden><div class="sheet" id="sheet" role="dialog" aria-modal="true"></div></div>

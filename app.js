@@ -17,8 +17,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.13.0";
+const VERSION = "0.14.0";
 const CHANGELOG = [
+  ["0.14.0","Planes ahora está adentro de “Para hacer”. Con “Juntar ideas” marcás varias cosas de tu lista y se arma un plan con ellas. Arriba quedan menos pestañas."],
   ["0.13.0","Más simple: “Hechos” ahora está adentro de “Para hacer”, con un interruptor Por hacer / Hechos. Una pestaña menos arriba."],
   ["0.12.0","El dado de “¿Qué hacemos hoy?” ahora te sugiere algo al azar de lo que pasa en Buenos Aires (Turismo BA y Baires Secreta), no de lo que ya agregaron. Si te gusta, lo sumás a tu lista."],
   ["0.11.1","La pestaña “Pendientes” ahora se llama “Para hacer”."],
@@ -66,7 +67,7 @@ const BA = [-34.6037, -58.3816];
 const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
 const MAX_MEMBERS = 10;   // tiene que coincidir con maxMembers() en firestore.rules
-const state = { items:[], plans:[], lists:[], plansLoaded:false, calPlans:{}, calItems:{}, pendingItem:null, calMonth:"", calDay:"", pendingPlan:null, tab:"actividad", view:"pend", q:"", zona:"", tag:"",
+const state = { items:[], plans:[], lists:[], plansLoaded:false, calPlans:{}, selecting:false, sel:new Set(), calItems:{}, pendingItem:null, calMonth:"", calDay:"", pendingPlan:null, tab:"actividad", view:"pend", q:"", zona:"", tag:"",
   me:null, group:null, gid:null, loaded:false, lastPick:null, share:null, installEvt:null,
   mapShowDone:false, mapHidden:new Set(), mapFitted:false };
 const $ = id => document.getElementById(id);
@@ -361,7 +362,7 @@ function enterGroup(gid){
       renderHeader(); render();
     },
     items => { if(state.gid !== gid) return; state.items = items; state.loaded = true; render(); maybeOpenShare(); maybeOpenPendingPlan(); },
-    plans => { if(state.gid !== gid) return; state.plans = plans; state.plansLoaded = true; if(state.view==="planes") render(); maybeOpenPendingPlan(); },
+    plans => { if(state.gid !== gid) return; state.plans = plans; state.plansLoaded = true; if(["pend","done","planes"].includes(state.view)) render(); maybeOpenPendingPlan(); },
     e => { console.error(e); if(state.gid !== gid) return; if(e && e.code==="permission-denied") goToAnotherList(gid); else banner("Se cortó la conexión con la lista. Volvé a abrir la app."); });
 }
 
@@ -454,11 +455,18 @@ function render(){
   $("listName").textContent = state.group?.name || (state.loaded ? "Lista" : "");
   const who = !state.group ? "" : state.group.private ? "🔒 Privada · " : (state.group.members||[]).length > 1 ? `👥 ${(state.group.members||[]).length} personas · ` : "";
   $("summary").textContent = state.loaded ? `${who}${pend} por hacer · ${done} hecho${done===1?"":"s"}` : "Cargando…";
-  $("addLbl").textContent = state.view==="planes" || state.view==="calendario" ? "Nuevo plan" : "Agregar";
+  $("addLbl").textContent = state.view==="planes" ? "Nuevo plan" : state.view==="calendario" ? "Nuevo plan" : "Agregar";
 
-  document.querySelectorAll(".seg [data-view]").forEach(b=>b.setAttribute("aria-pressed", b.dataset.view===state.view || (b.dataset.view==="pend" && state.view==="done")));
+  const inParaHacer = ["pend","done","planes"].includes(state.view);
+  if(state.selecting && state.view!=="pend") stopSelecting(true);
+  document.querySelectorAll(".seg [data-view]").forEach(b=>b.setAttribute("aria-pressed", b.dataset.view===state.view || (b.dataset.view==="pend" && inParaHacer)));
   const listView = state.view==="pend" || state.view==="done";
-  $("tabs").hidden = $("tools").hidden = $("list").hidden = $("doneSw").hidden = !listView;
+  $("tabs").hidden = $("tools").hidden = $("list").hidden = !listView;
+  $("doneSw").hidden = !inParaHacer;
+  $("juntarBtn").hidden = !(inParaHacer && state.view!=="done") || state.selecting || (state.loaded && !state.items.some(i=>!i.done));
+  $("nPlans").textContent = state.plansLoaded ? state.plans.length : "";
+  $("selBar").hidden = !state.selecting; $("addBtn").hidden = state.selecting || $("vMain").hidden || state.view==="planes";
+  if(state.selecting){ const n = state.sel.size; $("selGo").textContent = n ? `Armar plan con ${n}` : "Elegí ideas"; $("selGo").disabled = !n; }
   document.querySelectorAll("#doneSw [data-dv]").forEach(b=>b.setAttribute("aria-pressed", b.dataset.dv===state.view));
   $("nPend").textContent = state.loaded ? pend : ""; $("nDone").textContent = state.loaded ? done : "";
   $("zonas").hidden = state.view!=="zonas";
@@ -497,13 +505,16 @@ function render(){
   }
   list.innerHTML = rows.map(i=>{
     const meta = itemMeta(i, { showList:searching });
-    return `<li class="item ${i.done?"is-done":""}">
-      <button class="check" type="button" data-check="${esc(i.id)}" aria-label="${i.done?"Volver a por hacer":"Marcar como hecho"}">${i.done?CHECK:""}</button>
+    const on = state.selecting && state.sel.has(i.id);
+    return `<li class="item ${i.done?"is-done":""} ${state.selecting?"selecting":""} ${on?"picked":""}" ${state.selecting?`data-sel="${esc(i.id)}"`:""}>
+      ${state.selecting
+        ? `<button class="selbox" type="button" data-sel="${esc(i.id)}" aria-pressed="${on}" aria-label="${on?"Sacar del plan":"Sumar al plan"}">${on?CHECK:""}</button>`
+        : `<button class="check" type="button" data-check="${esc(i.id)}" aria-label="${i.done?"Volver a por hacer":"Marcar como hecho"}">${i.done?CHECK:""}</button>`}
       <div class="body"><div class="title">${esc(i.title)}</div>${i.note?`<div class="note">${esc(i.note)}</div>`:""}${meta?`<div class="meta">${meta}</div>`:""}
         ${i.done && i.memory ? `<div class="memory">${esc(i.memory)}</div>` : ""}
         ${i.done && i.hasPhoto ? `<button type="button" class="thumb" data-photo="${esc(i.id)}" aria-label="Ver foto"><img data-ph="${esc(i.id)}" alt="Foto de ${esc(i.title)}"></button>` : ""}
       </div>
-      <button class="more" type="button" data-edit="${esc(i.id)}" aria-label="Editar">⋯</button>
+      ${state.selecting ? "" : `<button class="more" type="button" data-edit="${esc(i.id)}" aria-label="Editar">⋯</button>`}
     </li>`;
   }).join("");
   hydratePhotos(list);
@@ -704,8 +715,7 @@ function renderPlanes(){
   const box = $("planes");
   if(!state.plansLoaded){ box.innerHTML = `<div class="empty"><b>Cargando…</b></div>`; return; }
   if(!state.plans.length){
-    box.innerHTML = `<div class="empty"><b>Todavía no hay planes</b>Armá el recorrido de un día: elegí lugares de la lista, ponelos en orden y miralos en el mapa.</div>
-      <button type="button" class="btn primary" data-newplan>+ Nuevo plan</button>`;
+    box.innerHTML = `<div class="empty"><b>Todavía no hay planes</b>Tocá <strong>🧩 Juntar ideas</strong>, marcá varias cosas de tu lista y se arma el recorrido del día, en orden y en el mapa.</div>`;
     return;
   }
   const t = todayStr();
@@ -731,7 +741,7 @@ function routeUrl(pts){
 
 function planSheet(plan, preStop, preDate){
   let stops = (plan ? plan.stops||[] : []).slice();
-  if(preStop && !stops.includes(preStop)) stops.push(preStop);
+  [].concat(preStop || []).forEach(id=>{ if(id && !stops.includes(id)) stops.push(id); });
   let layer = null;
   openSheet(`
     <h2>${plan ? "Plan" : "Nuevo plan"}</h2>
@@ -820,7 +830,7 @@ function planSheet(plan, preStop, preDate){
     if(plan) store.savePlan(plan.id, data);
     else store.savePlan(store.newPlanId(), { ...data, createdAt:Date.now(), createdBy:state.me.uid });
     closeSheet(); toast(plan ? "Plan guardado" : "Plan creado");
-    if(!plan && state.view!=="calendario"){ state.view = "planes"; render(); }
+    if(!plan && state.view!=="calendario"){ stopSelecting(true); state.view = "planes"; render(); }
   };
   if(plan) $("plDel").onclick = ()=>{
     $("plDelRow").innerHTML = `<button type="button" class="btn ghost" id="plNo">No, dejarlo</button><button type="button" class="btn danger" id="plYes">Sí, borrar el plan</button>`;
@@ -1210,7 +1220,7 @@ function itemForm(item, pre={}){
     if(item) store.save(item.id, data);
     else {
       store.save(store.newId(), { ...data, done:false, rating:0, doneAt:0, memory:"", hasPhoto:false, createdAt:Date.now(), createdBy:state.me.uid }, gid);
-      if(gid===state.gid){ state.tab = list; if(["done","planes","calendario"].includes(state.view)) state.view = "pend"; }
+      if(gid===state.gid){ state.tab = list; if(["done","planes","calendario"].includes(state.view)){ state.view = "pend"; } stopSelecting(true); }
     }
     state.mapFitted = false;
     const other = gid!==state.gid && state.lists.find(l=>l.id===gid);
@@ -1500,6 +1510,18 @@ $("planes").addEventListener("click", e=>{
   const b = e.target.closest("[data-plan]");
   if(b){ const p = state.plans.find(x=>x.id===b.dataset.plan); if(p) planSheet(p); }
 });
+function startSelecting(){
+  state.selecting = true; state.sel = new Set(); state.view = "pend";
+  if(!state.items.some(i=>i.list===state.tab && !i.done)){ const k = catKeys().find(k=>state.items.some(i=>i.list===k && !i.done)); if(k) state.tab = k; }
+  render(); toast("Tocá las ideas que querés juntar");
+}
+function stopSelecting(quiet){ state.selecting = false; state.sel = new Set(); if(!quiet) render(); }
+$("juntarBtn").onclick = startSelecting;
+$("selCancel").onclick = ()=>stopSelecting();
+$("selGo").onclick = ()=>{
+  const ids = [...state.sel]; if(!ids.length) return;
+  planSheet(null, ids);
+};
 $("doneSw").addEventListener("click", e=>{ const b = e.target.closest("[data-dv]"); if(b && state.view!==b.dataset.dv){
   state.view = b.dataset.dv;
   const wantDone = state.view==="done", has = k => state.items.some(i=>i.list===k && !!i.done===wantDone);
@@ -1523,7 +1545,7 @@ $("mapFilters").addEventListener("click", e=>{
 });
 $("heroBtn").onclick = pickSheet;
 $("discBtn").onclick = ()=>{ discSheet(); loadDisc().then(()=>{ if($("dClose")) discSheet(); }); };
-$("addBtn").onclick = ()=>state.view==="planes" ? planSheet(null) : state.view==="calendario" ? planSheet(null, null, state.calDay) : itemForm(null);
+$("addBtn").onclick = ()=>state.view==="planes" ? startSelecting() : state.view==="calendario" ? planSheet(null, null, state.calDay) : itemForm(null);
 $("cal").addEventListener("click", e=>{
   const nav = e.target.closest("[data-calnav]");
   if(nav){ const [y,m] = state.calMonth.split("-").map(Number), d = new Date(y, m-1+(+nav.dataset.calnav), 1); state.calMonth = ymd(d).slice(0,7); state.calDay = ""; return renderCal(); }
@@ -1544,6 +1566,13 @@ $("cal").addEventListener("click", e=>{
   }
 });
 $("list").addEventListener("click", e=>{
+  if(state.selecting){
+    if(e.target.closest("a")) return;
+    const s = e.target.closest("[data-sel]"); if(!s) return;
+    const id = s.dataset.sel;
+    if(state.sel.has(id)) state.sel.delete(id); else if(state.sel.size < 30) state.sel.add(id); else toast("Un plan puede tener hasta 30 paradas.");
+    return render();
+  }
   const ph = e.target.closest("[data-photo]");
   if(ph){ const it = state.items.find(i=>i.id===ph.dataset.photo); if(it) photoSheet(it); return; }
   const c = e.target.closest("[data-check]"), ed = e.target.closest("[data-edit]");

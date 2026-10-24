@@ -291,3 +291,13 @@ textarea{resize:vertical;min-height:64px}
 .donesw button{border:0;background:none;border-radius:999px;padding:7px 14px;font-weight:600;font-size:.88rem;color:var(--muted)}
 .donesw button b{font-weight:600;opacity:.75;margin-left:2px;font-variant-numeric:tabular-nums}
 .donesw button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+
+/* 0.14.0: juntar ideas */
+.juntar{border:1.5px dashed var(--accent);background:none;color:var(--accent);border-radius:14px;padding:11px 14px;font-weight:700;text-align:center;margin-top:-6px}
+.item.selecting{cursor:pointer}
+.item.picked{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.selbox{width:28px;height:28px;border-radius:8px;border:2px solid var(--muted);background:none;display:grid;place-items:center;flex:none;color:var(--accent-ink);margin-top:2px}
+.selbox[aria-pressed="true"]{background:var(--accent);border-color:var(--accent)}
+.selbar{position:fixed;left:0;right:0;bottom:0;z-index:20;display:flex;gap:10px;padding:12px max(16px,env(safe-area-inset-left,0px)) calc(12px + env(safe-area-inset-bottom,0px));background:var(--surface);border-top:1px solid var(--line);box-shadow:var(--shadow)}
+.selbar .btn{flex:1}
+.selbar .btn:first-child{flex:0 0 auto}
