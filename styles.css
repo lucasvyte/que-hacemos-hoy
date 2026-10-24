@@ -259,3 +259,23 @@ textarea{resize:vertical;min-height:64px}
 .clk-btns{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px;padding:6px 12px 14px}
 .clk-btns button{border:0;background:none;color:var(--accent);font-weight:700;font-size:1rem;padding:10px 12px;border-radius:10px}
 .clk-btns [data-cx="clear"]{margin-right:auto}
+
+/* 0.11.0: para descubrir */
+.disc{display:flex;align-items:center;gap:12px;text-align:left;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:14px 16px;color:var(--ink);margin-top:-6px}
+.disc>div{flex:1;min-width:0}
+.disc b{display:block;font-family:var(--display);font-weight:800;font-size:1.15rem}
+.disc span{font-size:.85rem;color:var(--muted)}
+.disc .disc-ic{font-size:1.5rem;color:inherit}
+.disc .disc-go{font-size:1.6rem;line-height:1}
+.disclist{display:flex;flex-direction:column;gap:10px}
+.dcard{display:flex;gap:12px;background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:10px;align-items:flex-start}
+.dcard img{width:76px;height:76px;object-fit:cover;border-radius:10px;flex:none;background:var(--line)}
+.dbody{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
+.dbody b{font-size:1rem;line-height:1.25;overflow-wrap:anywhere}
+.dbody .note{font-size:.82rem;color:var(--muted)}
+.dk{font-size:.75rem;font-weight:600;color:var(--muted);display:inline-flex;gap:6px;align-items:center;text-transform:uppercase;letter-spacing:.06em}
+.dact{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-top:4px;flex-wrap:wrap}
+.dact a{color:var(--accent);font-weight:600;font-size:.88rem}
+.dadd{border:0;background:var(--accent);color:var(--accent-ink);border-radius:999px;padding:7px 13px;font-weight:600;font-size:.85rem}
+.dadded{border:1px solid var(--line);background:none;color:var(--muted);border-radius:999px;padding:6px 12px;font-weight:600;font-size:.85rem}
+.hint a{color:var(--accent);font-weight:600}

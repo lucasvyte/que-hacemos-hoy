@@ -17,8 +17,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.10.3";
+const VERSION = "0.11.0";
 const CHANGELOG = [
+  ["0.11.0","Para descubrir: las propuestas de la semana de Turismo Buenos Aires y lo último de Baires Secreta, actualizadas todos los días. Las agregás a tu lista con un toque."],
   ["0.10.3","Reloj propio para elegir la hora, igual al del celular pero con todos los botones a la vista."],
   ["0.10.2","Vuelve el reloj del celular para elegir la hora."],
   ["0.10.0","Al agregar algo se puede poner día y hora (“Cuándo”). Lo que tiene día aparece en el Calendario junto con los planes, de todas tus listas."],
@@ -1288,6 +1289,80 @@ function photoSheet(item){
   $("phClose").onclick = closeSheet;
 }
 
+/* ---------- para descubrir: propuestas que junta el robot de GitHub todos los días ---------- */
+let discData = null, discLoading = null;
+function loadDisc(){
+  if(discLoading) return discLoading;
+  discLoading = fetch("data/descubrir.json", { cache:"no-cache" }).then(r=>r.ok ? r.json() : null).catch(()=>null)
+    .then(d=>{ discData = d; discLoading = null; paintDiscBtn(); return d; });
+  return discLoading;
+}
+const discItems = () => discData ? Object.values(discData.sources || {}).flatMap(s=>s.items || []) : [];
+function paintDiscBtn(){
+  const n = discItems().length;
+  $("discSub").textContent = n ? `${n} propuestas de esta semana en Buenos Aires` : "Propuestas de esta semana en Buenos Aires";
+}
+const DAYS = ["domingo","lunes","martes","miercoles","jueves","viernes","sabado"];
+const inMyList = d => state.items.some(i=>i.link && d.link && i.link===d.link);
+function discSheet(){
+  let f = { when:"todo", free:false, src:"todo", cat:"" , q:"" };
+  const draw = ()=>{
+    const all = discItems();
+    const today = DAYS[new Date().getDay()];
+    const finde = ["viernes","sabado","domingo"];
+    const cats = [...new Set(all.map(d=>d.cat))].filter(Boolean);
+    const rows = all.filter(d=>
+      (f.src==="todo" || d.src===f.src) && (!f.free || d.free) && (!f.cat || d.cat===f.cat)
+      && (f.when==="todo" || (d.days && (f.when==="hoy" ? d.days.includes(today) : d.days.some(x=>finde.includes(x)))))
+      && (!f.q || norm([d.title, d.tipo, d.place, d.zona, d.when].join(" ")).includes(norm(f.q))));
+    const upd = discData && Object.values(discData.sources||{}).map(s=>s.updated).filter(Boolean).sort().pop();
+    const failed = discData ? Object.entries(discData.sources||{}).filter(([,s])=>s.ok===false).map(([k])=>k==="turismo"?"Turismo BA":"Baires Secreta") : [];
+    const pill = (k, v, label) => `<button type="button" class="pill" data-df="${k}" data-dv="${esc(v)}" aria-pressed="${String(f[k])===String(v)}">${label}</button>`;
+    openSheet(`
+      <h2>Para descubrir</h2>
+      <p class="hint" style="margin:-6px 0 0">De <a href="https://turismo.buenosaires.gob.ar/es/article/que-hacer-esta-semana" target="_blank" rel="noopener">Turismo Buenos Aires</a> y <a href="https://bairessecreta.com" target="_blank" rel="noopener">Baires Secreta</a>${upd ? " · actualizado " + esc(new Date(upd).toLocaleDateString("es-AR",{ weekday:"short", day:"numeric", month:"short" })) : ""}${failed.length ? ` · hoy no se pudo leer ${esc(failed.join(" ni "))}` : ""}.</p>
+      <input id="dQ" type="search" placeholder="Buscar: teatro, Palermo, gratis…" aria-label="Buscar propuestas" value="${esc(f.q)}">
+      <div class="pills">${pill("when","todo","Cualquier día")}${pill("when","hoy","Hoy")}${pill("when","finde","Finde")}<button type="button" class="pill" data-dfree aria-pressed="${f.free}">Gratis</button></div>
+      <div class="pills">${pill("src","todo","Todo")}${pill("src","turismo","Turismo BA")}${pill("src","secreta","Baires Secreta")}</div>
+      ${cats.length>1 ? `<div class="pills">${pill("cat","","Todos los tipos")}${cats.map(c=>pill("cat", c, `<span class="dot" style="background:${listColor(c)}"></span>${esc(catOf(c).label)}`)).join("")}</div>` : ""}
+      <div class="sec">${rows.length} propuesta${rows.length===1?"":"s"}</div>
+      <div class="disclist">${!discData ? `<div class="empty"><b>${discLoading ? "Cargando…" : "No se pudieron cargar"}</b>${discLoading ? "" : "Revisá la conexión y probá de nuevo."}</div>`
+        : rows.length ? rows.slice(0, 80).map(d=>{
+          const sub = [d.tipo, d.free ? "Gratis" : ""].filter(Boolean).join(" · ");
+          const where = [d.place, d.zona && !(d.place||"").includes(d.zona) ? d.zona : ""].filter(Boolean).join(" · ");
+          const added = inMyList(d);
+          return `<div class="dcard">
+            ${d.img ? `<img src="${esc(d.img)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : ""}
+            <div class="dbody">
+              <span class="dk"><span class="dot" style="background:${listColor(d.cat)}"></span>${esc(sub)}</span>
+              <b>${esc(d.title)}</b>
+              ${d.when ? `<span class="note">🗓 ${esc(d.when)}</span>` : ""}
+              ${where ? `<span class="note">📍 ${esc(where)}</span>` : ""}
+              <div class="dact"><a href="${esc(safeUrl(d.link))}" target="_blank" rel="noopener">Ver más ↗</a>
+                <button type="button" class="${added?"dadded":"dadd"}" data-dadd="${esc(d.id)}" ${added?"disabled":""}>${added ? "✓ En tu lista" : "+ A mi lista"}</button></div>
+            </div></div>`;
+        }).join("") : `<div class="empty"><b>Nada con ese filtro</b>Probá con otro día o tipo.</div>`}</div>
+      <div class="row"><button type="button" class="btn ghost" id="dClose">Cerrar</button></div>`);
+    const sh = $("sheet");
+    sh.querySelectorAll("[data-df]").forEach(b=>b.onclick=()=>{ f[b.dataset.df] = b.dataset.dv; draw(); });
+    sh.querySelector("[data-dfree]").onclick = ()=>{ f.free = !f.free; draw(); };
+    let t; $("dQ").addEventListener("input", e=>{ clearTimeout(t); t = setTimeout(()=>{ f.q = e.target.value.trim(); const pos = e.target.selectionStart; draw(); $("dQ").focus(); try{ $("dQ").setSelectionRange(pos, pos); }catch{} }, 250); });
+    $("dClose").onclick = closeSheet;
+    sh.querySelectorAll("[data-dadd]").forEach(b=>b.onclick=()=>{
+      const d = all.find(x=>x.id===b.dataset.dadd); if(!d || !state.gid) return;
+      const note = [d.when, d.place].filter(Boolean).join(" · ").slice(0, 400);
+      store.save(store.newId(), { list:d.cat || "actividad", title:d.title.slice(0, 120), note, zona:(d.zona||"").slice(0, 60),
+        tags: d.free ? ["Gratis"] : [], link:d.link, maps:"", price:0,
+        lat: typeof d.lat==="number" ? d.lat : null, lng: typeof d.lng==="number" ? d.lng : null,
+        done:false, rating:0, doneAt:0, memory:"", hasPhoto:false, createdAt:Date.now(), createdBy:state.me.uid });
+      b.textContent = "✓ En tu lista"; b.className = "dadded"; b.disabled = true;
+      toast(`Agregado a “${state.group?.name || "tu lista"}”`);
+    });
+  };
+  draw();
+  if(!discData) loadDisc().then(()=>{ if($("dClose")) draw(); });
+}
+
 function pickSheet(){
   let filter = "todo", maxPrice = 3, zona = "", tag = "";
   const zonas = allZonas(), tags = uniq([].concat(...state.items.filter(i=>!i.done).map(tagsOf)));
@@ -1417,6 +1492,7 @@ $("mapFilters").addEventListener("click", e=>{
   if(e.target.closest("#mlDone")){ state.mapShowDone = !state.mapShowDone; renderMap(); }
 });
 $("heroBtn").onclick = pickSheet;
+$("discBtn").onclick = ()=>{ discSheet(); loadDisc().then(()=>{ if($("dClose")) discSheet(); }); };
 $("addBtn").onclick = ()=>state.view==="planes" ? planSheet(null) : state.view==="calendario" ? planSheet(null, null, state.calDay) : itemForm(null);
 $("cal").addEventListener("click", e=>{
   const nav = e.target.closest("[data-calnav]");
@@ -1461,4 +1537,5 @@ if("serviceWorker" in navigator && !DEMO_MODE) navigator.serviceWorker.register(
 state.share = readShare();
 if(state.share) history.replaceState(null, "", location.pathname + location.hash);
 store = DEMO_MODE ? demoStore() : firebaseStore();
+loadDisc();
 store.start(onUser);
