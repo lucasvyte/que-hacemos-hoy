@@ -231,3 +231,8 @@ textarea{resize:vertical;min-height:64px}
 .callegend span{display:inline-flex;gap:5px;align-items:center}
 .callegend .linkbtn{margin-left:auto;font-size:.85rem}
 .pcard .note{font-size:.85rem;color:var(--muted)}
+
+/* 0.8.0: Dónde */
+.where{border:1px solid var(--line);border-radius:14px;padding:12px}
+.where .wzona{margin-top:2px}
+.locbox a{color:var(--accent);font-weight:600}

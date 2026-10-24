@@ -17,8 +17,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.7.1";
+const VERSION = "0.8.0";
 const CHANGELOG = [
+  ["0.8.0","Al agregar algo, barrio, ubicación y mapa están juntos en “Dónde”: buscás el lugar o pegás un link de Maps y se pone el pin y el barrio solos."],
   ["0.7.1","Cambiar el nombre de la lista es más fácil: tocás el nombre arriba y lo editás ahí mismo."],
   ["0.7.0","Calendario: todos tus planes de todas tus listas (privadas y compartidas) en un mes, con los días marcados. Tocás un plan y se abre, aunque sea de otra lista."],
   ["0.6.3","Las actualizaciones llegan apenas se publican (antes podían tardar hasta 10 minutos)."],
@@ -860,19 +861,18 @@ function itemForm(item, pre={}){
         </div>
       </div>
       <label>Qué es<input id="fTitle" type="text" maxlength="120" required value="${esc(it.title)}" placeholder="Ej.: Parrilla en San Telmo"></label>
-      <label>Barrio o zona<input id="fZonaIn" type="text" maxlength="60" list="zonasList" value="${esc(it.zona)}" placeholder="Ej.: Palermo, Tigre, centro">
-        <datalist id="zonasList">${zonas.map(z=>`<option value="${esc(z)}"></option>`).join("")}</datalist></label>
       <label>Link del reel o de la web<input id="fLink" type="url" inputmode="url" value="${esc(lk.link)}" placeholder="https://www.instagram.com/reel/…"><span class="lhint" id="fLinkHint" hidden></span></label>
-      <div class="lbl">Ubicación en el mapa
-        <div class="locbox"><span id="locTxt"></span><button type="button" class="linkbtn" id="locToggle">Elegir en el mapa</button></div>
+      <div class="lbl where">Dónde
+        <div class="addtag"><input id="locQ" type="search" placeholder="Lugar, dirección o link de Maps" aria-label="Buscar el lugar"><button type="button" id="locGo">Buscar</button></div>
+        <div class="results" id="locRes"></div>
+        <div class="locbox"><span id="locTxt"></span><button type="button" class="linkbtn" id="locToggle">Ver en el mapa</button></div>
         <div id="locPanel" hidden style="display:flex;flex-direction:column;gap:8px">
-          <div class="addtag"><input id="locQ" type="search" placeholder="Buscar dirección o lugar" aria-label="Buscar en el mapa"><button type="button" id="locGo">Buscar</button></div>
-          <div class="results" id="locRes"></div>
           <div id="locMap" class="map small"></div>
+          <span class="hint">Tocá el mapa para mover el pin.</span>
           <div class="row" style="gap:8px"><button type="button" class="btn ghost" id="locMe">Usar mi ubicación</button><button type="button" class="btn ghost" id="locClear">Quitar ubicación</button></div>
-          <span class="hint">Tocá el mapa para poner el pin donde va.</span>
         </div>
-        <label style="margin-top:4px">Link de Google Maps (opcional)<input id="fMaps" type="url" inputmode="url" value="${esc(lk.maps)}" placeholder="https://maps.app.goo.gl/…"></label>
+        <label class="wzona">Barrio o zona<input id="fZonaIn" type="text" maxlength="60" list="zonasList" value="${esc(it.zona)}" placeholder="Se completa solo al ubicarlo">
+          <datalist id="zonasList">${zonas.map(z=>`<option value="${esc(z)}"></option>`).join("")}</datalist></label>
       </div>
       <label>Nota<textarea id="fNote" maxlength="400" placeholder="Qué pedir, cuándo ir, quién lo recomendó…">${esc(it.note)}</textarea></label>
       <div class="lbl">Precio
@@ -908,57 +908,93 @@ function itemForm(item, pre={}){
   /* links */
   const linkHint = ()=>{
     const v = $("fLink").value.trim(), h = $("fLinkHint");
-    if(v && isMaps(v) && !$("fMaps").value.trim()){ $("fMaps").value = v; $("fLink").value = ""; mapsChanged(); h.hidden=false; h.textContent="Era un link de Maps: lo pasé a Ubicación."; return; }
+    if(v && isMaps(v) && !mapsLink){ $("fLink").value = ""; useMapsLink(v); h.hidden=false; h.textContent="Era un link de Maps: lo pasé a Dónde."; return; }
     if(v && isIG(v)){ h.hidden=false; h.textContent = /\/(reel|reels|tv)\//.test(v) ? "Reel de Instagram ✓" : "Link de Instagram ✓"; }
     else h.hidden = true;
   };
   $("fLink").addEventListener("input", linkHint);
 
-  /* ubicación */
-  let pin = null;
-  const locTxt = ()=>{ $("locTxt").textContent = loc ? `📍 Ubicado (${loc.lat.toFixed(4)}, ${loc.lng.toFixed(4)})` : "Sin ubicar todavía"; };
-  const setLoc = (ll, pan)=>{
-    loc = ll ? { lat:+ll.lat.toFixed(6), lng:+ll.lng.toFixed(6) } : null; locTxt();
+  /* dónde: búsqueda, link de Maps, pin y barrio, todo junto */
+  let pin = null, mapsLink = lk.maps, zonaAuto = "", geoN = 0;
+  const NOM = "https://nominatim.openstreetmap.org";
+  const zonaFrom = a => {
+    if(!a) return "";
+    const z = a.suburb || a.neighbourhood || a.quarter || a.city_district || a.town || a.village || a.city || "";
+    return (zonas.find(x=>norm(x)===norm(z)) || z).slice(0, 60);
+  };
+  const putZona = z => { if(!z) return; const cur = $("fZonaIn").value.trim(); if(!cur || cur===zonaAuto){ $("fZonaIn").value = zonaAuto = z; locTxt(); } };
+  const reverse = async ll => {
+    const n = ++geoN;
+    try{
+      const r = await fetch(`${NOM}/reverse?format=jsonv2&zoom=16&addressdetails=1&accept-language=es&lat=${ll.lat}&lon=${ll.lng}`);
+      const d = await r.json();
+      if(n===geoN && $("fZonaIn")) putZona(zonaFrom(d.address));
+    }catch{}
+  };
+  const locTxt = ()=>{
+    const z = $("fZonaIn").value.trim();
+    $("locTxt").innerHTML = (loc ? `📍 Ubicado${z ? " · " + esc(z) : ""}` : "Sin ubicar todavía")
+      + (mapsLink ? ` · <a href="${esc(safeUrl(mapsLink))}" target="_blank" rel="noopener">link de Maps</a> <button type="button" class="linkbtn" id="mapsOff" style="display:inline;padding:0 4px" aria-label="Quitar link de Maps">✕</button>` : "");
+    if($("mapsOff")) $("mapsOff").onclick = ()=>{ mapsLink = ""; locTxt(); };
+  };
+  const setLoc = (ll, pan, geo)=>{
+    loc = ll ? { lat:+(+ll.lat).toFixed(6), lng:+(+ll.lng).toFixed(6) } : null; locTxt();
+    if(loc && geo) reverse(loc);
     if(!sheetMap) return;
     if(pin){ pin.remove(); pin = null; }
     if(loc){ pin = L.circleMarker([loc.lat, loc.lng], { radius:11, color:"#fff", weight:3, fillColor:listColor(list), fillOpacity:1 }).addTo(sheetMap); if(pan) sheetMap.setView([loc.lat, loc.lng], Math.max(sheetMap.getZoom(), 15)); }
   };
-  const mapsChanged = ()=>{ const c = coordsFromUrl($("fMaps").value); if(c){ setLoc(c, true); $("fLinkHint").hidden=false; $("fLinkHint").textContent="Ubicación tomada del link de Maps ✓"; } };
-  $("fMaps").addEventListener("input", mapsChanged);
-  locTxt();
+  const useMapsLink = v => {
+    mapsLink = safeUrl(v) || "";
+    const c = coordsFromUrl(v);
+    if(c){ setLoc(c, true, true); $("locRes").innerHTML = `<span class="hint">Ubicación tomada del link de Maps ✓</span>`; }
+    else $("locRes").innerHTML = `<span class="hint">Guardé el link de Maps. Para el pin en nuestro mapa, buscá el nombre o la dirección.</span>`;
+    locTxt();
+  };
+  $("fZonaIn").addEventListener("input", locTxt);
   const openMap = ()=>{
-    $("locPanel").hidden = false; $("locToggle").textContent = "Listo";
+    $("locPanel").hidden = false; $("locToggle").textContent = "Ocultar mapa";
     if(!window.L){ $("locRes").innerHTML = `<span class="hint">El mapa necesita conexión a internet.</span>`; return; }
     if(!sheetMap){
       sheetMap = L.map("locMap").setView(loc ? [loc.lat, loc.lng] : BA, loc ? 15 : 12);
       tiles().addTo(sheetMap);
-      sheetMap.on("click", e=>setLoc(e.latlng, false));
+      sheetMap.on("click", e=>setLoc(e.latlng, false, true));
       setLoc(loc, false);
     }
     setTimeout(()=>sheetMap && sheetMap.invalidateSize(), 80);
-    if(!$("locQ").value) $("locQ").value = [$("fTitle").value.trim(), $("fZonaIn").value.trim()].filter(Boolean).join(", ");
   };
-  $("locToggle").onclick = ()=>{ if($("locPanel").hidden) openMap(); else { $("locPanel").hidden = true; $("locToggle").textContent = "Elegir en el mapa"; } };
+  $("locToggle").onclick = ()=>{ if($("locPanel").hidden) openMap(); else { $("locPanel").hidden = true; $("locToggle").textContent = "Ver en el mapa"; } };
   const search = async ()=>{
-    const q = $("locQ").value.trim(); if(!q) return;
+    let q = $("locQ").value.trim();
+    if(q && /^https?:\/\//.test(q)){ $("locQ").value = ""; return useMapsLink(q); }
+    if(!q) q = $("locQ").value = [$("fTitle").value.trim(), $("fZonaIn").value.trim()].filter(Boolean).join(", ");
+    if(!q){ $("locRes").innerHTML = `<span class="hint">Escribí el nombre del lugar o la dirección.</span>`; return; }
     $("locRes").innerHTML = `<span class="hint">Buscando…</span>`;
     try{
-      const r = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&limit=5&countrycodes=ar&accept-language=es&q=${encodeURIComponent(q)}`);
+      const r = await fetch(`${NOM}/search?format=jsonv2&limit=5&addressdetails=1&countrycodes=ar&accept-language=es&q=${encodeURIComponent(q)}`);
       const data = await r.json();
-      if(!data.length){ $("locRes").innerHTML = `<span class="hint">No lo encontré. Probá con la dirección o tocá el mapa.</span>`; return; }
+      if(!data.length){ $("locRes").innerHTML = `<span class="hint">No lo encontré. Probá con la dirección (calle y número) o tocá “Ver en el mapa” y marcalo.</span>`; return; }
       $("locRes").innerHTML = data.map((d,n)=>`<button type="button" data-r="${n}">${esc(d.display_name)}</button>`).join("");
-      $("locRes").querySelectorAll("[data-r]").forEach(b=>b.onclick=()=>{ const d = data[+b.dataset.r]; setLoc({ lat:+d.lat, lng:+d.lon }, true); $("locRes").innerHTML = ""; });
-    }catch{ $("locRes").innerHTML = `<span class="hint">No se pudo buscar. Revisá la conexión o tocá el mapa.</span>`; }
+      $("locRes").querySelectorAll("[data-r]").forEach(b=>b.onclick=()=>{
+        const d = data[+b.dataset.r];
+        putZona(zonaFrom(d.address));
+        if(!$("fTitle").value.trim() && d.name) $("fTitle").value = d.name.slice(0, 120);
+        setLoc({ lat:d.lat, lng:d.lon }, true);
+        $("locRes").innerHTML = ""; $("locQ").value = "";
+      });
+    }catch{ $("locRes").innerHTML = `<span class="hint">No se pudo buscar. Revisá la conexión o marcalo en el mapa.</span>`; }
   };
   $("locGo").onclick = search;
   $("locQ").addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); search(); } });
+  $("locQ").addEventListener("paste", ()=>setTimeout(()=>{ const v = $("locQ").value.trim(); if(/^https?:\/\//.test(v) && isMaps(v)){ $("locQ").value = ""; useMapsLink(v); } }, 0));
   $("locMe").onclick = ()=>{
     if(!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(p=>setLoc({ lat:p.coords.latitude, lng:p.coords.longitude }, true), ()=>toast("No pude obtener tu ubicación."), { enableHighAccuracy:true, timeout:10000 });
+    navigator.geolocation.getCurrentPosition(p=>setLoc({ lat:p.coords.latitude, lng:p.coords.longitude }, true, true), ()=>toast("No pude obtener tu ubicación."), { enableHighAccuracy:true, timeout:10000 });
   };
   $("locClear").onclick = ()=>setLoc(null);
+  locTxt();
   linkHint();
-  if(!loc) mapsChanged();
+  if(!loc && mapsLink){ const c = coordsFromUrl(mapsLink); if(c) setLoc(c, false); }
   if(pre.openMap) openMap();
 
   /* completar con la descripción del reel (todo se lee acá, no se guarda ni se manda) */
@@ -969,7 +1005,7 @@ function itemForm(item, pre={}){
     const txt = $("fCap").value, h = $("capHint");
     if(!txt.trim()){ h.hidden = true; return; }
     const r = parseCaption(txt, zonas), done = [];
-    if(r.zona && canFill("fZonaIn","zona")){ $("fZonaIn").value = auto.zona = r.zona; done.push("barrio " + r.zona); }
+    if(r.zona && canFill("fZonaIn","zona")){ $("fZonaIn").value = auto.zona = r.zona; zonaAuto = ""; locTxt(); done.push("barrio " + r.zona); }
     if(r.name && canFill("fTitle","title")){ $("fTitle").value = auto.title = r.name; done.push("nombre"); }
     if(r.list && !item && !listTouched && r.list !== list){ pickList(r.list); done.push(LISTS[r.list].label.toLowerCase()); }
     h.hidden = false;
@@ -1010,7 +1046,7 @@ function itemForm(item, pre={}){
   };
   $("itemForm").onsubmit = e=>{
     e.preventDefault();
-    const title = $("fTitle").value.trim(), link = $("fLink").value.trim(), maps = $("fMaps").value.trim();
+    const title = $("fTitle").value.trim(), link = $("fLink").value.trim(), maps = mapsLink;
     if(!title) return showErr("Poné un nombre.");
     if(link && !safeUrl(link)) return showErr("El link tiene que empezar con https://");
     if(maps && !safeUrl(maps)) return showErr("El link de Maps tiene que empezar con https://");
