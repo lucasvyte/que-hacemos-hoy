@@ -17,8 +17,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.14.1";
+const VERSION = "0.14.2";
 const CHANGELOG = [
+  ["0.14.2","El botón Atrás del celular cierra lo que tengas abierto (una ventana, el reloj, Juntar ideas, otra pestaña) en vez de salir de la app."],
   ["0.14.1","Para descubrir y el dado ordenan las propuestas por día (hoy, mañana, y así), con un título por día, y ya no muestran las que pasaron."],
   ["0.14.0","Planes ahora está adentro de “Para hacer”. Con “Juntar ideas” marcás varias cosas de tu lista y se arma un plan con ellas. Arriba quedan menos pestañas."],
   ["0.13.0","Más simple: “Hechos” ahora está adentro de “Para hacer”, con un interruptor Por hacer / Hechos. Una pestaña menos arriba."],
@@ -451,6 +452,7 @@ function itemMeta(i, opts={}){
 }
 
 function render(){
+  if(hasLayer()) ensureGuard(); else releaseGuard();
   $("ver").textContent = VERSION;
   const pend = state.items.filter(i=>!i.done).length, done = state.items.filter(i=>i.done).length;
   $("listName").textContent = state.group?.name || (state.loaded ? "Lista" : "");
@@ -688,7 +690,8 @@ function clockPick(cur, done){
   svg.addEventListener("pointerdown", e=>{ dragging = true; svg.setPointerCapture(e.pointerId); pick(e); });
   svg.addEventListener("pointermove", e=>{ if(dragging) pick(e); });
   svg.addEventListener("pointerup", e=>{ if(dragging){ dragging = false; pick(e, true); } });
-  const close = v=>{ ov.remove(); window.removeEventListener("keydown", key, true); if(v !== null) done(v); };
+  const close = v=>{ ov.remove(); window.removeEventListener("keydown", key, true); if(v !== null) done(v); if(!$("scrim").hidden) ensureGuard(); else releaseGuard(); };
+  ensureGuard();
   const key = e=>{ if(e.key==="Escape"){ e.stopPropagation(); close(null); } };
   window.addEventListener("keydown", key, true);
   ov.addEventListener("click", e=>{
@@ -976,8 +979,31 @@ let sheetMap = null;
 function openSheet(html){
   if(sheetMap){ sheetMap.remove(); sheetMap = null; }
   $("sheet").innerHTML = html; $("scrim").hidden = false; $("sheet").scrollTop = 0;
+  ensureGuard();
 }
-function closeSheet(){ if(sheetMap){ sheetMap.remove(); sheetMap = null; } $("scrim").hidden = true; $("sheet").innerHTML = ""; }
+function closeSheet(){ if(sheetMap){ sheetMap.remove(); sheetMap = null; } $("scrim").hidden = true; $("sheet").innerHTML = ""; releaseGuard(); }
+
+/* ---------- botón Atrás del celular: cierra lo de arriba en vez de salir de la app ----------
+   Mientras haya algo abierto, dejamos una entrada extra en el historial; Atrás la consume y cerramos una capa. */
+let guardConsuming = false;
+const hasLayer = () => !!document.querySelector(".clk-ov") || !$("scrim").hidden || state.selecting || (!$("vMain").hidden && state.view!=="pend");
+function ensureGuard(){ if(!(history.state && history.state.qhh)) history.pushState({ qhh:1 }, ""); }
+function releaseGuard(){
+  setTimeout(()=>{ if(!hasLayer() && history.state && history.state.qhh){ guardConsuming = true; history.back(); } }, 0);
+}
+function backLayer(){
+  const clk = document.querySelector(".clk-ov [data-cx=cancel]");
+  if(clk){ clk.click(); return true; }
+  if(!$("scrim").hidden){ closeSheet(); return true; }
+  if(state.selecting){ stopSelecting(); return true; }
+  if(!$("vMain").hidden && state.view!=="pend"){ state.view = "pend"; render(); window.scrollTo(0, 0); return true; }
+  return false;
+}
+window.addEventListener("popstate", ()=>{
+  if(guardConsuming){ guardConsuming = false; if(hasLayer()) ensureGuard(); return; }
+  backLayer();
+  if(hasLayer()) ensureGuard();
+});
 $("scrim").addEventListener("click", e=>{ if(e.target.id==="scrim") closeSheet(); });
 document.addEventListener("keydown", e=>{ if(e.key==="Escape" && !$("scrim").hidden) closeSheet(); });
 
