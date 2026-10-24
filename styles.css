@@ -285,3 +285,9 @@ textarea{resize:vertical;min-height:64px}
 .pick-act a{color:inherit;font-weight:600;text-decoration:underline}
 .pick-add{border:0;background:var(--accent-ink);color:var(--accent);border-radius:999px;padding:8px 14px;font-weight:700}
 .pick-add:disabled{opacity:.7}
+
+/* 0.13.0: Por hacer / Hechos adentro de Para hacer */
+.donesw{display:flex;gap:4px;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:4px;align-self:flex-start}
+.donesw button{border:0;background:none;border-radius:999px;padding:7px 14px;font-weight:600;font-size:.88rem;color:var(--muted)}
+.donesw button b{font-weight:600;opacity:.75;margin-left:2px;font-variant-numeric:tabular-nums}
+.donesw button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}

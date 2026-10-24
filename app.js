@@ -17,8 +17,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.12.0";
+const VERSION = "0.13.0";
 const CHANGELOG = [
+  ["0.13.0","Más simple: “Hechos” ahora está adentro de “Para hacer”, con un interruptor Por hacer / Hechos. Una pestaña menos arriba."],
   ["0.12.0","El dado de “¿Qué hacemos hoy?” ahora te sugiere algo al azar de lo que pasa en Buenos Aires (Turismo BA y Baires Secreta), no de lo que ya agregaron. Si te gusta, lo sumás a tu lista."],
   ["0.11.1","La pestaña “Pendientes” ahora se llama “Para hacer”."],
   ["0.11.0","Para descubrir: las propuestas de la semana de Turismo Buenos Aires y lo último de Baires Secreta, actualizadas todos los días. Las agregás a tu lista con un toque."],
@@ -452,12 +453,14 @@ function render(){
   const pend = state.items.filter(i=>!i.done).length, done = state.items.filter(i=>i.done).length;
   $("listName").textContent = state.group?.name || (state.loaded ? "Lista" : "");
   const who = !state.group ? "" : state.group.private ? "🔒 Privada · " : (state.group.members||[]).length > 1 ? `👥 ${(state.group.members||[]).length} personas · ` : "";
-  $("summary").textContent = state.loaded ? `${who}${pend} pendiente${pend===1?"":"s"} · ${done} hecho${done===1?"":"s"}` : "Cargando…";
+  $("summary").textContent = state.loaded ? `${who}${pend} por hacer · ${done} hecho${done===1?"":"s"}` : "Cargando…";
   $("addLbl").textContent = state.view==="planes" || state.view==="calendario" ? "Nuevo plan" : "Agregar";
 
-  document.querySelectorAll(".seg [data-view]").forEach(b=>b.setAttribute("aria-pressed", b.dataset.view===state.view));
+  document.querySelectorAll(".seg [data-view]").forEach(b=>b.setAttribute("aria-pressed", b.dataset.view===state.view || (b.dataset.view==="pend" && state.view==="done")));
   const listView = state.view==="pend" || state.view==="done";
-  $("tabs").hidden = $("tools").hidden = $("list").hidden = !listView;
+  $("tabs").hidden = $("tools").hidden = $("list").hidden = $("doneSw").hidden = !listView;
+  document.querySelectorAll("#doneSw [data-dv]").forEach(b=>b.setAttribute("aria-pressed", b.dataset.dv===state.view));
+  $("nPend").textContent = state.loaded ? pend : ""; $("nDone").textContent = state.loaded ? done : "";
   $("zonas").hidden = state.view!=="zonas";
   $("mapWrap").hidden = state.view!=="mapa";
   $("planes").hidden = state.view!=="planes";
@@ -471,8 +474,8 @@ function render(){
   const showDone = state.view==="done", searching = !!state.q;
   if(!catKeys().includes(state.tab)) state.tab = "actividad";
   $("tabs").innerHTML = catKeys(state.tab).map(k=>[k, catOf(k)]).map(([k,v])=>{
-    const n = state.items.filter(i=>i.list===k && !i.done).length;
-    return `<button class="tab" role="tab" type="button" data-tab="${esc(k)}" aria-selected="${!searching && state.tab===k}">${esc(v.label)}<small>${n} pendiente${n===1?"":"s"}</small></button>`;
+    const n = state.items.filter(i=>i.list===k && !!i.done===showDone).length;
+    return `<button class="tab" role="tab" type="button" data-tab="${esc(k)}" aria-selected="${!searching && state.tab===k}">${esc(v.label)}<small>${n} ${showDone ? (n===1?"hecho":"hechos") : "por hacer"}</small></button>`;
   }).join("");
   const selTab = $("tabs").querySelector('[aria-selected="true"]'), tb = $("tabs");
   if(selTab && (selTab.offsetLeft < tb.scrollLeft || selTab.offsetLeft + selTab.offsetWidth > tb.scrollLeft + tb.clientWidth)) tb.scrollLeft = selTab.offsetLeft - 8;
@@ -481,7 +484,7 @@ function render(){
   const rows = state.items.filter(i=>(searching || i.list===state.tab) && !!i.done===showDone && matches(i))
     .sort((a,b)=> showDone ? (b.doneAt||0)-(a.doneAt||0) : (b.createdAt||0)-(a.createdAt||0));
   const rn = $("resnote"); rn.hidden = !searching;
-  if(searching) rn.textContent = `${rows.length} resultado${rows.length===1?"":"s"} en ${showDone?"hechos":"pendientes"} de esta lista`;
+  if(searching) rn.textContent = `${rows.length} resultado${rows.length===1?"":"s"} en ${showDone?"hechos":"por hacer"} de esta lista`;
 
   const list = $("list");
   if(!state.loaded){ list.innerHTML = `<li class="empty"><b>Cargando la lista…</b>Un segundo.</li>`; return; }
@@ -495,7 +498,7 @@ function render(){
   list.innerHTML = rows.map(i=>{
     const meta = itemMeta(i, { showList:searching });
     return `<li class="item ${i.done?"is-done":""}">
-      <button class="check" type="button" data-check="${esc(i.id)}" aria-label="${i.done?"Marcar como pendiente":"Marcar como hecho"}">${i.done?CHECK:""}</button>
+      <button class="check" type="button" data-check="${esc(i.id)}" aria-label="${i.done?"Volver a por hacer":"Marcar como hecho"}">${i.done?CHECK:""}</button>
       <div class="body"><div class="title">${esc(i.title)}</div>${i.note?`<div class="note">${esc(i.note)}</div>`:""}${meta?`<div class="meta">${meta}</div>`:""}
         ${i.done && i.memory ? `<div class="memory">${esc(i.memory)}</div>` : ""}
         ${i.done && i.hasPhoto ? `<button type="button" class="thumb" data-photo="${esc(i.id)}" aria-label="Ver foto"><img data-ph="${esc(i.id)}" alt="Foto de ${esc(i.title)}"></button>` : ""}
@@ -542,7 +545,7 @@ function renderZonas(){
     const by = catKeys().map(k=>[k, catOf(k)]).map(([k,v])=>{ const n = pend.filter(i=>i.list===k).length; return n ? `${n} ${k==="actividad"?(n===1?"actividad":"actividades"):esc(v.label.toLowerCase())}` : ""; }).filter(Boolean).join(" · ");
     return `<button type="button" class="zcard ${g.key===NOZONA?"none":""}" data-zona="${esc(g.key)}">
       <b>${g.key===NOZONA?"":PIN}${esc(g.name)}</b>
-      <span class="zn">${pend.length} pendiente${pend.length===1?"":"s"}${done?` · ${done} hecho${done===1?"":"s"}`:""}</span>
+      <span class="zn">${pend.length} por hacer${done?` · ${done} hecho${done===1?"":"s"}`:""}</span>
       ${by?`<span class="zc">${by}</span>`:""}
       ${g.key===NOZONA?`<span class="zc">Pónganles barrio para ordenarlos</span>`:""}
     </button>`;
@@ -565,8 +568,8 @@ function zonaSheet(key){
     const nDone = g.items.filter(i=>i.done).length;
     openSheet(`
       <h2>${esc(g.name)}</h2>
-      <div class="pills"><button type="button" class="pill" id="zP" aria-pressed="${!showDone}">Pendientes</button><button type="button" class="pill" id="zD" aria-pressed="${showDone}">Hechos (${nDone})</button></div>
-      ${secs || `<div class="empty"><b>${showDone?"Nada hecho todavía":"Nada pendiente"}</b></div>`}
+      <div class="pills"><button type="button" class="pill" id="zP" aria-pressed="${!showDone}">Por hacer</button><button type="button" class="pill" id="zD" aria-pressed="${showDone}">Hechos (${nDone})</button></div>
+      ${secs || `<div class="empty"><b>${showDone?"Nada hecho todavía":"Nada por hacer"}</b></div>`}
       <div class="row"><button type="button" class="btn ghost" id="zClose">Cerrar</button><button type="button" class="btn primary" id="zAdd">+ Agregar${g.key===NOZONA?"":" en "+esc(g.name)}</button></div>`);
     $("zP").onclick = ()=>{ showDone=false; draw(); };
     $("zD").onclick = ()=>{ showDone=true; draw(); };
@@ -1497,6 +1500,12 @@ $("planes").addEventListener("click", e=>{
   const b = e.target.closest("[data-plan]");
   if(b){ const p = state.plans.find(x=>x.id===b.dataset.plan); if(p) planSheet(p); }
 });
+$("doneSw").addEventListener("click", e=>{ const b = e.target.closest("[data-dv]"); if(b && state.view!==b.dataset.dv){
+  state.view = b.dataset.dv;
+  const wantDone = state.view==="done", has = k => state.items.some(i=>i.list===k && !!i.done===wantDone);
+  if(!has(state.tab)){ const k = catKeys().find(has); if(k) state.tab = k; }   // si la categoría abierta está vacía, salta a una que tenga algo
+  render();
+} });
 document.querySelectorAll(".seg [data-view]").forEach(b=>b.onclick=()=>{ state.view = b.dataset.view; render(); b.scrollIntoView({ inline:"nearest", block:"nearest" }); });
 $("tabs").addEventListener("click", e=>{ const b=e.target.closest("[data-tab]"); if(b){ state.tab=b.dataset.tab; if(state.q){ state.q=""; $("q").value=""; } render(); } });
 let qTimer; $("q").addEventListener("input", e=>{ clearTimeout(qTimer); qTimer = setTimeout(()=>{ state.q = e.target.value.trim(); render(); }, 150); });
@@ -1542,7 +1551,7 @@ $("list").addEventListener("click", e=>{
   const item = state.items.find(i=>i.id===(c||ed).dataset[c?"check":"edit"]);
   if(!item) return;
   if(ed) return itemForm(item);
-  if(item.done){ store.save(item.id, { done:false, doneAt:0 }); toast("Volvió a pendientes"); }
+  if(item.done){ store.save(item.id, { done:false, doneAt:0 }); toast("Volvió a Por hacer"); }
   else doneSheet(item);
 });
 $("changelog").innerHTML = CHANGELOG.map(([v,t])=>`<li><b>${v}</b> · ${esc(t)}</li>`).join("");
