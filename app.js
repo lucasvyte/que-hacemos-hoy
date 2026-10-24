@@ -17,8 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.15.0";
+const VERSION = "0.16.0";
+/* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
+const PUSH_URL = "";
+const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
+  ["0.16.0","Avisos: cuando alguien suma algo o arma un plan en una lista compartida, a los demás les llega una notificación al celular. Tocándola se abre eso mismo. Se activan con “🔔 Activar avisos”."],
   ["0.15.0","Las secciones pasan abajo, como en cualquier app: Para hacer, Mapa y Calendario. Los barrios están adentro del Mapa, con “¿Qué tenemos cerca?”. Arriba aparece lo que tienen hoy y el finde, con una idea. Cada uno marca con ♥ lo que le copa, y lo que les gusta a los dos sube primero. Lo que agregás desde Para descubrir entra con su fecha al Calendario. Hechos ahora es un álbum de recuerdos por mes."],
   ["0.14.2","El botón Atrás del celular cierra lo que tengas abierto (una ventana, el reloj, Juntar ideas, otra pestaña) en vez de salir de la app."],
   ["0.14.1","Para descubrir y el dado ordenan las propuestas por día (hoy, mañana, y así), con un título por día, y ya no muestran las que pasaron."],
@@ -214,11 +218,15 @@ function firebaseStore(){
       if(old) b.delete(doc(fs, "invites", old));
       await b.commit();
     },
-    leave(){ return updateDoc(doc(fs, "groups", state.gid), { members:arrayRemove(state.me.uid), ["memberInfo."+state.me.uid]:deleteField() }); },
+    async leave(){
+      // antes de irse, deja de recibir avisos de esta lista
+      try{ const s = await getDocs(collection(fs, `groups/${state.gid}/push`)); await Promise.all(s.docs.filter(d=>d.data().uid===state.me.uid).map(d=>deleteDoc(d.ref))); }catch(e){ console.error(e); }
+      return updateDoc(doc(fs, "groups", state.gid), { members:arrayRemove(state.me.uid), ["memberInfo."+state.me.uid]:deleteField() });
+    },
     async deleteGroup(){
       const gid = state.gid, code = state.group && state.group.inviteCode;
       const refs = [];
-      for(const sub of ["items", "plans", "photos"]){
+      for(const sub of ["items", "plans", "photos", "push"]){
         const s = await getDocs(collection(fs, `groups/${gid}/${sub}`));
         s.docs.forEach(d=>refs.push(d.ref));
       }
@@ -255,7 +263,12 @@ function firebaseStore(){
     remove(id){ deleteDoc(doc(fs, itemsPath(), id)).catch(report); deleteDoc(doc(fs, `groups/${state.gid}/photos`, id)).catch(()=>{}); },
     async getPhoto(id){ const s = await getDoc(doc(fs, `groups/${state.gid}/photos`, id)); return s.exists() ? s.data().data : ""; },
     setPhoto(id, data){ return setDoc(doc(fs, `groups/${state.gid}/photos`, id), { data }); },
-    delPhoto(id){ deleteDoc(doc(fs, `groups/${state.gid}/photos`, id)).catch(()=>{}); }
+    delPhoto(id){ deleteDoc(doc(fs, `groups/${state.gid}/photos`, id)).catch(()=>{}); },
+    // avisos: a qué celulares avisar en cada lista (groups/{gid}/push/{uid_xxxx})
+    async pushSubs(gid){ const s = await getDocs(collection(fs, `groups/${gid}/push`)); return s.docs.map(d=>({ id:d.id, ...d.data() })); },
+    setPush(gid, id, data){ return setDoc(doc(fs, `groups/${gid}/push`, id), data); },
+    delPush(gid, id){ return deleteDoc(doc(fs, `groups/${gid}/push`, id)); },
+    idToken(){ return auth.currentUser ? auth.currentUser.getIdToken() : Promise.resolve(""); }
   };
 }
 
@@ -305,7 +318,8 @@ function demoStore(){
     removePlan(id){ D().plans = D().plans.filter(x=>x.id!==id); emit(); },
     async getPhoto(id){ return photos.get(id) || ""; },
     async setPhoto(id, data){ photos.set(id, data); },
-    delPhoto(id){ photos.delete(id); }
+    delPhoto(id){ photos.delete(id); },
+    async pushSubs(){ return []; }, async setPush(){}, async delPush(){}, async idToken(){ return ""; }
   };
 }
 
@@ -322,7 +336,8 @@ function loginError(e){
 async function onUser(u){
   if(!u){ state.me = null; show("vLogin"); return; }
   state.me = u;
-  refreshLists();
+  refreshLists().then(()=>syncPush(sharedGids()));
+  if(openTarget(state.openAt)){ state.openAt = null; return; }
   try{
     const gid = await store.myGroupId();
     if(gid) return enterGroup(gid);
@@ -363,6 +378,7 @@ function enterGroup(gid){
       if(state.gid !== gid) return;
       if(!g || !(g.members||[]).includes(state.me.uid)){ goToAnotherList(gid); return; }
       state.group = g;
+      if(isShared(g)) syncPush([gid]);
       const l = state.lists.find(x=>x.id===gid); if(l) Object.assign(l, g); else state.lists = sortLists(state.lists.concat({ id:gid, ...g }));
       renderHeader(); render();
     },
@@ -383,6 +399,114 @@ function maybeOpenPendingPlan(){
   state.pendingPlan = null;
   const p = state.plans.find(x=>x.id===pp.pid);
   if(p) planSheet(p); else toast("No encontré ese plan.");
+}
+
+/* ---------- avisos (notificaciones al celular) ----------
+   Cada celular que activa los avisos se guarda en groups/{gid}/push de sus listas compartidas.
+   Al sumar algo o crear un plan, la app le pide al servidor de avisos (PUSH_URL) que avise a los celulares de los demás. */
+const PUSH_KEY = "qhh-push";   // en este celular: "on", "off" o "later" (dijo "Ahora no")
+const pushPref = () => { try{ return localStorage.getItem(PUSH_KEY) || ""; }catch{ return ""; } };
+const setPushPref = v => { try{ localStorage.setItem(PUSH_KEY, v); }catch{} };
+const pushCapable = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+const pushAvailable = () => !!(PUSH_URL || DEMO_MODE);
+const pushOn = () => pushPref()==="on" && (DEMO_MODE || (pushCapable() && Notification.permission==="granted"));
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent);
+const isShared = g => !!g && !g.private;
+const sharedGids = () => state.lists.filter(isShared).map(l=>l.id);
+const firstName = n => String(n || "").trim().split(/\s+/)[0] || "Alguien";
+function b64uBytes(s){ s = s.replace(/-/g, "+").replace(/_/g, "/"); const b = atob(s + "===".slice((s.length + 3) % 4)); return Uint8Array.from(b, c=>c.charCodeAt(0)); }
+async function pushDocId(endpoint){
+  const h = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(endpoint)));
+  return state.me.uid + "_" + [...h.slice(0, 8)].map(x=>x.toString(16).padStart(2, "0")).join("");
+}
+async function currentSub(create){
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if(!sub && create) sub = await reg.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:b64uBytes(VAPID_PUBLIC) });
+  return sub;
+}
+const pushSynced = new Set();
+// anota este celular en esas listas (una vez por sesión), para que los demás le puedan avisar
+async function syncPush(gids){
+  if(DEMO_MODE || !pushAvailable() || !pushOn() || !state.me) return;
+  gids = gids.filter(g=>g && !pushSynced.has(g)); if(!gids.length) return;
+  try{
+    const sub = await currentSub(true); if(!sub) return;
+    const j = sub.toJSON(), id = await pushDocId(j.endpoint);
+    await Promise.all(gids.map(async g=>{
+      await store.setPush(g, id, { uid:state.me.uid, endpoint:j.endpoint, p256dh:j.keys.p256dh, auth:j.keys.auth, at:Date.now() });
+      pushSynced.add(g);
+    }));
+  }catch(e){ console.error(e); }
+}
+async function enablePush(){
+  if(DEMO_MODE){ setPushPref("on"); toast("Listo (en la demo no llegan avisos de verdad)"); return true; }
+  if(!pushCapable()){ toast(isIOS ? "En iPhone, primero agregá la app a la pantalla de inicio (Compartir → Agregar a inicio) y abrila desde ahí." : "Este navegador no permite avisos."); return false; }
+  let perm = Notification.permission;
+  if(perm==="default") perm = await Notification.requestPermission();
+  if(perm!=="granted"){ toast(perm==="denied" ? "Los avisos están bloqueados. Activalos en Ajustes del celular → Notificaciones de la app." : "No se activaron los avisos."); return false; }
+  setPushPref("on");
+  try{ await currentSub(true); }
+  catch(e){ console.error(e); setPushPref(""); toast("No se pudieron activar los avisos. Probá de nuevo con conexión."); return false; }
+  pushSynced.clear(); await syncPush(sharedGids().concat(isShared(state.group) ? [state.gid] : []));
+  toast("🔔 Listo, te vamos a avisar"); return true;
+}
+async function disablePush(){
+  setPushPref("off"); pushSynced.clear();
+  if(DEMO_MODE || !pushCapable()) return;
+  try{
+    const sub = await currentSub(false); if(!sub) return;
+    const id = await pushDocId(sub.endpoint);
+    await Promise.all(state.lists.map(l=>store.delPush(l.id, id).catch(()=>{})));
+    await sub.unsubscribe();
+  }catch(e){ console.error(e); }
+}
+// kind: "item" o "plan"; obj: lo que se acaba de guardar (con su id)
+async function notifyOthers(gid, kind, obj){
+  if(!PUSH_URL || DEMO_MODE || !state.me) return;
+  const g = gid===state.gid && state.group ? state.group : state.lists.find(l=>l.id===gid);
+  const members = (g && g.members) || [];
+  if(!isShared(g) || members.length < 2) return;
+  try{
+    const subs = (await store.pushSubs(gid)).filter(s=>s.uid!==state.me.uid && members.includes(s.uid));
+    if(!subs.length) return;
+    const where = g.name ? ` en “${g.name}”` : "";
+    const when = obj.date ? (obj.date===todayStr() ? "hoy" : fmtDay(obj.date)) + (obj.time ? " " + obj.time : "") : "";
+    const n = (obj.stops||[]).length;
+    const msg = kind==="plan"
+      ? { title:`${firstName(state.me.name)} armó un plan${where}`, body:[obj.title, when, n ? `${n} parada${n===1?"":"s"}` : ""].filter(Boolean).join(" · "), url:`./?g=${gid}&p=${obj.id}`, tag:"plan-"+obj.id }
+      : { title:`${firstName(state.me.name)} sumó algo${where}`, body:[obj.title, catOf(obj.list).one, when].filter(Boolean).join(" · "), url:`./?g=${gid}&i=${obj.id}`, tag:"item-"+obj.id };
+    const r = await fetch(PUSH_URL, { method:"POST", headers:{ "Content-Type":"application/json", Authorization:"Bearer " + await store.idToken() },
+      body:JSON.stringify({ ...msg, subs:subs.map(s=>({ id:s.id, endpoint:s.endpoint, p256dh:s.p256dh, auth:s.auth })) }) });
+    if(!r.ok){ console.error("avisos:", r.status); return; }
+    const { results = [] } = await r.json();
+    // celulares que ya no existen (desinstalaron, sacaron el permiso): se borran
+    results.filter(x=>x.status===404 || x.status===410).forEach(x=>store.delPush(gid, x.id).catch(()=>{}));
+  }catch(e){ console.error(e); }
+}
+// tarjeta "¿Te avisamos?" en Por hacer (una sola vez por celular)
+function renderPushAsk(show){
+  const box = $("pushAsk"), g = state.group;
+  const others = g && state.me ? (g.members||[]).filter(u=>u!==state.me.uid) : [];
+  const can = show && state.loaded && pushAvailable() && isShared(g) && others.length && !pushPref()
+    && (DEMO_MODE || isIOS || (pushCapable() && Notification.permission!=="denied"));
+  if(!can){ box.hidden = true; return; }
+  const who = others.length===1 ? firstName((g.memberInfo||{})[others[0]]?.name) : "alguien";
+  box.hidden = false;
+  box.innerHTML = `<span class="pi" aria-hidden="true">🔔</span><div class="pb"><b>¿Te avisamos?</b>
+    <span>Cuando ${esc(who)} sume algo o arme un plan, te llega una notificación al celular.</span>
+    <div class="fact"><button type="button" class="linkbtn" data-pnot>Ahora no</button><button type="button" class="dadd" data-pon>Activar avisos</button></div></div>`;
+}
+// abrir lo que dice el aviso (?g=lista&i=ítem o &p=plan)
+function readOpen(){ const p = new URLSearchParams(location.search), g = p.get("g"); return g ? { gid:g, i:p.get("i"), p:p.get("p") } : null; }
+function openTarget(t){
+  const ok = s => /^[\w-]{1,64}$/.test(s || "");
+  if(!t || !ok(t.gid) || !state.me) return false;
+  if(ok(t.i)) state.pendingItem = { gid:t.gid, id:t.i };
+  else if(ok(t.p)) state.pendingPlan = { gid:t.gid, pid:t.p };
+  if(!["pend","done","planes"].includes(state.view)) state.view = "pend";
+  if(state.gid===t.gid){ render(); maybeOpenPendingPlan(); } else enterGroup(t.gid);
+  return true;
 }
 
 /* borra un ítem y lo saca de los planes donde estaba */
@@ -470,6 +594,7 @@ function render(){
   const listView = state.view==="pend" || state.view==="done";
   $("heroBtn").hidden = $("discBtn").hidden = !inParaHacer;
   renderFinde(state.view==="pend" && !state.selecting);
+  renderPushAsk(state.view==="pend" && !state.selecting);
   $("tools").hidden = $("list").hidden = !listView;
   $("tabs").hidden = !listView || state.view==="done";   // Hechos es un álbum con todo junto
   $("doneSw").hidden = !inParaHacer;
@@ -930,7 +1055,11 @@ function planSheet(plan, preStop, preDate){
     if(time && !data.date){ $("plErr").hidden = false; $("plErr").textContent = "Elegí también el día."; return; }
     if(time || (plan && plan.time)) data.time = time;
     if(plan) store.savePlan(plan.id, data);
-    else store.savePlan(store.newPlanId(), { ...data, createdAt:Date.now(), createdBy:state.me.uid });
+    else {
+      const pid = store.newPlanId();
+      store.savePlan(pid, { ...data, createdAt:Date.now(), createdBy:state.me.uid });
+      notifyOthers(state.gid, "plan", { id:pid, ...data });
+    }
     closeSheet(); toast(plan ? "Plan guardado" : "Plan creado");
     if(!plan && state.view!=="calendario"){ stopSelecting(true); state.view = "planes"; render(); }
   };
@@ -1087,7 +1216,8 @@ let guardConsuming = false;
 const hasLayer = () => !!document.querySelector(".clk-ov") || !$("scrim").hidden || state.selecting || (!$("vMain").hidden && state.view!=="pend");
 function ensureGuard(){ if(!(history.state && history.state.qhh)) history.pushState({ qhh:1 }, ""); }
 function releaseGuard(){
-  setTimeout(()=>{ if(!hasLayer() && history.state && history.state.qhh){ guardConsuming = true; history.back(); } }, 0);
+  // guardConsuming: ya hay un "atrás" en camino (cerrar una ventana y render() llaman los dos); no retroceder dos veces
+  setTimeout(()=>{ if(!guardConsuming && !hasLayer() && history.state && history.state.qhh){ guardConsuming = true; history.back(); } }, 0);
 }
 function backLayer(){
   const clk = document.querySelector(".clk-ov [data-cx=cancel]");
@@ -1344,7 +1474,9 @@ function itemForm(item, pre={}){
     const gid = $("fGid") ? $("fGid").value : state.gid;
     if(item) store.save(item.id, data);
     else {
-      store.save(store.newId(), { ...data, done:false, rating:0, doneAt:0, memory:"", hasPhoto:false, createdAt:Date.now(), createdBy:state.me.uid }, gid);
+      const nid = store.newId(), nd = { ...data, done:false, rating:0, doneAt:0, memory:"", hasPhoto:false, createdAt:Date.now(), createdBy:state.me.uid };
+      store.save(nid, nd, gid);
+      notifyOthers(gid, "item", { id:nid, ...nd });
       if(gid===state.gid){ state.tab = list; if(["done","planes","calendario"].includes(state.view)){ state.view = "pend"; } stopSelecting(true); }
     }
     state.mapFitted = false;
@@ -1537,11 +1669,13 @@ function addDisc(d){
   if(!state.gid || !state.me) return false;
   const note = [d.when, d.place].filter(Boolean).join(" · ").slice(0, 400);
   const when = discDate(d);
-  store.save(store.newId(), { list:d.cat || "actividad", title:d.title.slice(0, 120), note, zona:(d.zona||"").slice(0, 60),
+  const nid = store.newId(), nd = { list:d.cat || "actividad", title:d.title.slice(0, 120), note, zona:(d.zona||"").slice(0, 60),
     tags: d.free ? ["Gratis"] : [], link:d.link, maps:"", price:0,
     lat: typeof d.lat==="number" ? d.lat : null, lng: typeof d.lng==="number" ? d.lng : null,
     date: when ? when.date : "", time: when ? when.time : "",
-    done:false, rating:0, doneAt:0, memory:"", hasPhoto:false, createdAt:Date.now(), createdBy:state.me.uid });
+    done:false, rating:0, doneAt:0, memory:"", hasPhoto:false, createdAt:Date.now(), createdBy:state.me.uid };
+  store.save(nid, nd);
+  notifyOthers(state.gid, "item", { id:nid, ...nd });
   toast(`Agregado a “${state.group?.name || "tu lista"}”` + (when ? ` · ${when.date===todayStr() ? "hoy" : fmtDay(when.date)}${when.time ? " " + when.time : ""} en el Calendario` : ""));
   return true;
 }
@@ -1668,6 +1802,8 @@ function menuSheet(){
       <div class="row"><button type="button" class="btn ghost" id="mCopy">Copiar código</button>${navigator.share?`<button type="button" class="btn ghost" id="mShare">Enviar invitación</button>`:""}</div>
       <button type="button" class="linkbtn" id="mNew">Cambiar el código (el anterior deja de servir)</button>`}
       ${alone ? `<button type="button" class="linkbtn" id="mPriv">Hacerla privada (solo vos)</button>` : ""}`}
+    ${pushAvailable() && !g.private ? `<div class="pushrow"><span aria-hidden="true">🔔</span><div><b>Avisos ${pushOn() ? "activados" : ""}</b><span class="hint">${pushOn() ? "Te avisamos en este celular cuando alguien suma algo o arma un plan en tus listas compartidas." : "Enterate cuando alguien suma algo o arma un plan."}</span></div>
+      <button type="button" class="btn ${pushOn() ? "ghost" : "primary"}" id="mPush">${pushOn() ? "Apagar" : "Activar"}</button></div>` : ""}
     ${state.installEvt && !standalone ? `<button type="button" class="btn primary" id="mInstall">Instalar la app</button>` : ""}
     <div class="row" id="mDangerRow">${alone
       ? `<button type="button" class="btn danger" id="mDelList">Borrar esta lista</button>`
@@ -1698,6 +1834,11 @@ function menuSheet(){
     const gid = state.gid; $("mYes").textContent = "Borrando…"; await store.deleteGroup(); closeSheet(); toast("Lista borrada"); goToAnotherList(gid);
   });
   if($("mInstall")) $("mInstall").onclick = async ()=>{ state.installEvt.prompt(); await state.installEvt.userChoice; state.installEvt = null; closeSheet(); };
+  if($("mPush")) $("mPush").onclick = async ()=>{
+    $("mPush").disabled = true;
+    if(pushOn()){ await disablePush(); toast("Avisos apagados en este celular"); } else await enablePush();
+    menuSheet(); render();
+  };
   $("mClose").onclick = closeSheet;
   $("mOut").onclick = async ()=>{ closeSheet(); stopCal(); state.calPlans = {}; state.items = []; state.plans = []; state.lists = []; state.group = null; state.gid = null; await store.logout(); };
 }
@@ -1772,6 +1913,11 @@ $("nearBox").addEventListener("click", e=>{
   const b = e.target.closest("[data-near]"); if(!b) return;
   const it = state.items.find(x=>x.id===b.dataset.near); if(it) itemForm(it);
 });
+$("pushAsk").addEventListener("click", async e=>{
+  if(e.target.closest("[data-pnot]")){ setPushPref("later"); render(); toast("Cuando quieras, lo activás tocando las caritas de arriba"); return; }
+  const b = e.target.closest("[data-pon]"); if(!b) return;
+  b.disabled = true; await enablePush(); render();
+});
 $("finde").addEventListener("click", e=>{
   const fi = e.target.closest("[data-fitem]"); if(fi){ const it = state.items.find(x=>x.id===fi.dataset.fitem); if(it) itemForm(it); return; }
   const fp = e.target.closest("[data-fplan]"); if(fp){ const p = state.plans.find(x=>x.id===fp.dataset.fplan); if(p) planSheet(p); return; }
@@ -1836,7 +1982,13 @@ if("serviceWorker" in navigator && !DEMO_MODE) navigator.serviceWorker.register(
 
 /* ---------- inicio ---------- */
 state.share = readShare();
-if(state.share) history.replaceState(null, "", location.pathname + location.hash);
+state.openAt = readOpen();
+if(state.share || state.openAt) history.replaceState(null, "", location.pathname + location.hash);
+// con la app abierta, tocar un aviso la trae al frente y abre eso
+if("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("message", e=>{
+  const u = e.data && e.data.qhhOpen; if(!u) return;
+  try{ const p = new URL(u, location.href).searchParams; openTarget({ gid:p.get("g"), i:p.get("i"), p:p.get("p") }); }catch{}
+});
 store = DEMO_MODE ? demoStore() : firebaseStore();
 loadDisc();
 store.start(onUser);

@@ -31,7 +31,9 @@ service cloud.firestore {
         && (!('tags' in d) || (d.tags is list && d.tags.size() <= 30))
         && optNum(d, 'lat') && optNum(d, 'lng')
         && optNum(d, 'price') && optNum(d, 'rating')
-        && optNum(d, 'createdAt') && optNum(d, 'doneAt');
+        && optNum(d, 'createdAt') && optNum(d, 'doneAt')
+        && optStr(d, 'date', 10) && optStr(d, 'time', 5)
+        && (!('likes' in d) || (d.likes is list && d.likes.size() <= 10));
     }
 
     // Cada persona solo ve y cambia su propio perfil (en qué lista está)
@@ -121,6 +123,22 @@ service cloud.firestore {
           && optStr(request.resource.data, 'createdBy', 128)
           && request.resource.data.stops is list && request.resource.data.stops.size() <= 30
           && optNum(request.resource.data, 'createdAt') && optNum(request.resource.data, 'updatedAt');
+      }
+
+      // Avisos: los celulares que quieren enterarse de lo nuevo en esta lista.
+      // Cada uno anota solo su celular (el id empieza con su uid); los miembros los leen para avisarse
+      // y pueden borrar los que ya no existen.
+      match /push/{id} {
+        allow read, delete: if isMember(gid);
+        allow create, update: if isMember(gid)
+          && id.matches(request.auth.uid + '_[0-9a-f]{16}')
+          && request.resource.data.keys().hasOnly(['uid', 'endpoint', 'p256dh', 'auth', 'at'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.endpoint is string && request.resource.data.endpoint.size() <= 1000
+          && request.resource.data.endpoint.matches('https://.*')
+          && request.resource.data.p256dh is string && request.resource.data.p256dh.size() <= 200
+          && request.resource.data.auth is string && request.resource.data.auth.size() <= 100
+          && optNum(request.resource.data, 'at');
       }
 
       // Fotos: solo los miembros, y solo una imagen JPEG guardada dentro del documento
