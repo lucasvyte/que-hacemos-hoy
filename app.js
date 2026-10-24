@@ -17,8 +17,9 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.11.0";
+const VERSION = "0.11.1";
 const CHANGELOG = [
+  ["0.11.1","La pestaña “Pendientes” ahora se llama “Para hacer”."],
   ["0.11.0","Para descubrir: las propuestas de la semana de Turismo Buenos Aires y lo último de Baires Secreta, actualizadas todos los días. Las agregás a tu lista con un toque."],
   ["0.10.3","Reloj propio para elegir la hora, igual al del celular pero con todos los botones a la vista."],
   ["0.10.2","Vuelve el reloj del celular para elegir la hora."],
