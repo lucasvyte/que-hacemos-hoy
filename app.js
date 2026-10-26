@@ -17,11 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.16.2";
+const VERSION = "0.17.0";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
 const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
+  ["0.17.0","🔁 Hacerlo de nuevo: cualquier cosa ya hecha (la haya sumado quien sea) se puede volver a poner en Por hacer como algo nuevo, y el recuerdo de la vez anterior queda en Hechos."],
   ["0.16.2","Arreglo: al tocar un aviso con la app abierta en segundo plano quedaba la pantalla en negro. Ahora se abre directo en lo nuevo."],
   ["0.16.1","Los avisos ya funcionan: tocá “🔔 Activar avisos” para que te lleguen."],
   ["0.16.0","Avisos: cuando alguien suma algo o arma un plan en una lista compartida, a los demás les llega una notificación al celular. Tocándola se abre eso mismo. Se activan con “🔔 Activar avisos”."],
@@ -1246,20 +1247,23 @@ $("scrim").addEventListener("click", e=>{ if(e.target.id==="scrim") closeSheet()
 document.addEventListener("keydown", e=>{ if(e.key==="Escape" && !$("scrim").hidden) closeSheet(); });
 
 function itemForm(item, pre={}){
-  const it = item || { list:pre.list||state.tab, title:pre.title||"", note:pre.note||"", zona:pre.zona||"", tags:[], link:pre.link||"", maps:"", price:0 };
+  const src = pre.again;
+  const it = item || (src ? { list:src.list, title:src.title||"", note:src.note||"", zona:src.zona||"", tags:tagsOf(src).slice(), link:src.link||"", maps:src.maps||"", price:src.price||0, lat:src.lat, lng:src.lng }
+    : { list:pre.list||state.tab, title:pre.title||"", note:pre.note||"", zona:pre.zona||"", tags:[], link:pre.link||"", maps:"", price:0 });
   const lk = linksOf(it);
   let tags = tagsOf(it).slice(), list = it.list, price = it.price||0;
   let loc = hasLoc(it) ? { lat:it.lat, lng:it.lng } : null;
   const zonas = allZonas();
   openSheet(`
-    <h2>${item?"Editar":pre.fromShare?"Guardar lo compartido":"Agregar"}</h2>
+    <h2>${item?"Editar":src?"Hacerlo de nuevo":pre.fromShare?"Guardar lo compartido":"Agregar"}</h2>
+    ${src ? `<span class="hint" style="margin-top:-8px">Vuelve a Por hacer como algo nuevo. El recuerdo de la vez anterior queda en Hechos.</span>` : ""}
     <form id="itemForm" style="display:flex;flex-direction:column;gap:14px">
       ${!item && state.lists.length>1 ? `<label>Guardar en<select id="fGid">${state.lists.map(l=>`<option value="${esc(l.id)}" ${l.id===state.gid?"selected":""}>${l.private?"🔒 ":""}${esc(l.name||"Lista")}</option>`).join("")}</select></label>` : ""}
       <div class="lbl">Qué tipo
         <div class="pills" role="group" aria-label="Categoría" id="catPills"></div>
         <div class="addtag" id="catNewBox" hidden><input id="catNew" type="text" maxlength="28" placeholder="Ej.: Ferias, Museos, Shows" aria-label="Nueva categoría"><button type="button" id="catNewOk">Crear</button></div></div>
       <div class="lbl capbox">
-        <button type="button" class="linkbtn" id="capOpen" ${pre.fromShare?"hidden":""}>📋 Completar con la descripción del reel</button>
+        <button type="button" class="linkbtn" id="capOpen" ${pre.fromShare||src?"hidden":""}>📋 Completar con la descripción del reel</button>
         <div id="capPanel" ${pre.fromShare?"":"hidden"} style="display:flex;flex-direction:column;gap:8px">
           <label>Descripción del reel<textarea id="fCap" maxlength="5000" placeholder="Pegá la descripción del reel o dictá lo que dicen: barrio, nombre del lugar, dirección…"></textarea></label>
           <div class="row" style="gap:8px">${navigator.clipboard && navigator.clipboard.readText ? `<button type="button" class="btn ghost" id="capPaste">Pegar</button>` : ""}<button type="button" class="btn ghost" id="capGo">Completar</button></div>
@@ -1291,12 +1295,13 @@ function itemForm(item, pre={}){
       ${item ? `<div class="lbl">Planes
         <span class="hint">${(()=>{ const inP = state.plans.filter(p=>(p.stops||[]).includes(item.id)); return inP.length ? "Está en: " + inP.map(p=>esc(p.title)).join(", ") : "No está en ningún plan."; })()}</span>
         <div class="row" style="gap:8px">${state.plans.some(p=>!(p.stops||[]).includes(item.id)) ? `<select id="fPlan" aria-label="Sumar a un plan"><option value="">Sumar a un plan…</option>${sortedPlans().filter(p=>!(p.stops||[]).includes(item.id)).map(p=>`<option value="${esc(p.id)}">${esc(p.title)}</option>`).join("")}</select>` : ""}<button type="button" class="btn ghost" id="fNewPlan">Nuevo plan con esto</button></div></div>` : ""}
-      ${item && item.done ? `<button type="button" class="linkbtn" id="fMem">Cambiar fecha, puntaje, foto o recuerdo →</button>` : ""}
+      ${item && item.done ? `<button type="button" class="linkbtn" id="fMem">Cambiar fecha, puntaje, foto o recuerdo →</button><button type="button" class="linkbtn" id="fAgain">🔁 Hacerlo de nuevo</button>` : ""}
       <div class="err" id="fErr" hidden></div>
-      <div class="row"><button type="button" class="btn ghost" id="fCancel">Cancelar</button><button type="submit" class="btn primary">${item?"Guardar":"Agregar"}</button></div>
+      <div class="row"><button type="button" class="btn ghost" id="fCancel">Cancelar</button><button type="submit" class="btn primary">${item?"Guardar":src?"Sumar a Por hacer":"Agregar"}</button></div>
       ${item?`<div class="row" id="delRow"><button type="button" class="btn danger" id="fDel">Borrar</button></div>`:""}
     </form>`);
   const sh = $("sheet");
+  if($("fAgain")) $("fAgain").onclick = ()=>itemForm(null, { again:item });
   wireTime("fTime");
   const showErr = m => { $("fErr").hidden=false; $("fErr").textContent=m; };
 
@@ -1571,11 +1576,13 @@ function photoSheet(item){
     ${item.hasPhoto ? `<img class="bigimg" data-ph="${esc(item.id)}" alt="Foto de ${esc(item.title)}">` : ""}
     ${item.memory ? `<div class="memory" style="margin-top:0">${esc(item.memory)}</div>` : `<span class="hint">Todavía no tiene recuerdo ni foto.</span>`}
     <div class="row"><button type="button" class="btn ghost" id="phClose">Cerrar</button><button type="button" class="btn primary" id="phEdit">${item.hasPhoto || item.memory ? "Editar recuerdo" : "Sumar foto o recuerdo"}</button></div>
+    ${item.done ? `<button type="button" class="btn ghost" id="phAgain" style="width:100%">🔁 Hacerlo de nuevo</button>` : ""}
     <div class="row"><button type="button" class="linkbtn" id="phMore" style="text-align:center">Ver todo y editar</button>${item.done ? `<button type="button" class="linkbtn" id="phUndo" style="text-align:center">Volver a Por hacer</button>` : ""}</div>`);
   hydratePhotos($("sheet"));
   $("phClose").onclick = closeSheet;
   if($("phUndo")) $("phUndo").onclick = ()=>{ store.save(item.id, { done:false, doneAt:0 }); closeSheet(); toast("Volvió a Por hacer"); };
   $("phEdit").onclick = ()=>doneSheet(item);
+  if($("phAgain")) $("phAgain").onclick = ()=>itemForm(null, { again:item });
   $("phMore").onclick = ()=>itemForm(item);
 }
 
