@@ -17,12 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.17.0";
+const VERSION = "0.17.1";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
 const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
-  ["0.17.0","🔁 Hacerlo de nuevo: cualquier cosa ya hecha (la haya sumado quien sea) se puede volver a poner en Por hacer como algo nuevo, y el recuerdo de la vez anterior queda en Hechos."],
+  ["0.17.1","Puntaje de cada uno: en un recuerdo, cada persona de la lista toca las estrellas y pone su propio puntaje, sin tener que editar nada. Se ve el de todos y el promedio."],
   ["0.16.2","Arreglo: al tocar un aviso con la app abierta en segundo plano quedaba la pantalla en negro. Ahora se abre directo en lo nuevo."],
   ["0.16.1","Los avisos ya funcionan: tocá “🔔 Activar avisos” para que te lleguen."],
   ["0.16.0","Avisos: cuando alguien suma algo o arma un plan en una lista compartida, a los demás les llega una notificación al celular. Tocándola se abre eso mismo. Se activan con “🔔 Activar avisos”."],
@@ -88,6 +88,27 @@ const safeUrl = u => { try{ const x = new URL(u); return /^https?:$/.test(x.prot
 const fmtDate = ms => new Date(ms).toLocaleDateString("es-AR",{day:"numeric",month:"short",year:"numeric"});
 const priceHtml = p => p ? `<span class="price" aria-label="Precio ${p} de 3">${"$".repeat(p)}<i>${"$".repeat(3-p)}</i></span>` : "";
 const starsTxt = r => "★".repeat(r) + "☆".repeat(5-r);
+/* puntaje de cada persona: ratings = { uid: 1..5 } (0 = lo sacó). El puntaje viejo (rating, de antes de 0.17.0)
+   cuenta como de quien lo agregó, hasta que esa persona ponga el suyo. */
+function ratingsOf(i){
+  const r = {};
+  if(i.rating > 0){ const o = i.createdBy || "_"; if(!(i.ratings && o in i.ratings)) r[o] = i.rating; }
+  for(const [u,n] of Object.entries(i.ratings || {})) if(n > 0) r[u] = n;
+  return r;
+}
+function avgRating(i){ const v = Object.values(ratingsOf(i)); return v.length ? v.reduce((a,b)=>a+b,0) / v.length : 0; }
+const myRating = i => ratingsOf(i)[state.me?.uid] || 0;
+/* "★★★★☆ 4,5 · 2" para mostrar el promedio */
+function avgHtml(i, small){
+  const v = Object.values(ratingsOf(i)); if(!v.length) return "";
+  const a = avgRating(i), n = Math.round(a);
+  return `<span class="stars" aria-label="Promedio ${a.toFixed(1).replace(".",",")} de 5${v.length>1?`, ${v.length} puntajes`:""}">${small ? "★".repeat(n) : starsTxt(n)}</span>${v.length>1 ? `<span class="rcount"> ${a.toFixed(1).replace(".",",")} · ${v.length}</span>` : ""}`;
+}
+function rateItem(i, n){
+  const uid = state.me.uid;
+  i.ratings = { ...(i.ratings || {}), [uid]: n };
+  store.save(i.id, { ratings: { [uid]: n } });
+}
 const initial = n => (n || "?").trim().charAt(0).toUpperCase() || "?";
 const norm = s => String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().trim();
 const tagsOf = i => Array.isArray(i.tags) ? i.tags : [];
@@ -281,7 +302,7 @@ function demoStore(){
     { id:"d1", list:"comer", title:"Ejemplo: pizzería de barrio", note:"La de muzza al molde que nos recomendaron", zona:"Almagro", tags:["Con amigos"], price:1, done:false, createdAt:Date.now()-5e8, lat:-34.6097, lng:-58.4206, likes:["ana"], date:ymd(new Date()), time:"21:00" },
     { id:"d2", list:"actividad", title:"Ejemplo: picnic en los bosques", note:"Llevar mate y manta", zona:"Palermo", tags:["Al aire libre","Para el finde"], price:1, done:false, createdAt:Date.now()-4e8, link:"https://www.instagram.com/reel/EJEMPLO/", lat:-34.5711, lng:-58.4170, likes:["demo","ana"] },
     { id:"d5", list:"comer", title:"Ejemplo: heladería artesanal", zona:"Palermo", tags:[], price:1, done:false, createdAt:Date.now()-2e8, lat:-34.5880, lng:-58.4300, likes:["demo"] },
-    { id:"d6", list:"comer", title:"Ejemplo: parrilla de barrio", zona:"San Telmo", tags:[], price:2, done:true, rating:5, doneAt:Date.now()-3e9, memory:"La mejor provoleta.", createdAt:Date.now()-9e9, lat:-34.6212, lng:-58.3731 },
+    { id:"d6", list:"comer", title:"Ejemplo: parrilla de barrio", zona:"San Telmo", tags:[], price:2, done:true, rating:5, ratings:{ ana:4 }, doneAt:Date.now()-3e9, memory:"La mejor provoleta.", createdAt:Date.now()-9e9, lat:-34.6212, lng:-58.3731 },
     { id:"d3", list:"visitar", title:"Ejemplo: un museo nuevo", zona:"Recoleta", tags:["Día de lluvia"], price:2, done:true, rating:4, doneAt:Date.now()-2e8, memory:"Nos quedamos dos horas en la sala de arriba.", createdAt:Date.now()-9e8, lat:-34.5837, lng:-58.3931 },
     { id:"d4", list:"comer", title:"Ejemplo: café de especialidad", zona:"Palermo", tags:[], price:2, done:false, createdAt:Date.now()-3e8 }
   ];
@@ -295,7 +316,7 @@ function demoStore(){
   let cur = "demo", onItems = ()=>{}, onPlans = ()=>{}, onGroup = ()=>{};
   const D = (gid = cur) => data[gid] || (data[gid] = { items:[], plans:[] });
   const emit = ()=>{ if(!groups[cur]) return; onGroup({ ...groups[cur] }); onItems(D().items.map(i=>({...i}))); onPlans(D().plans.map(p=>({...p, stops:[...p.stops]}))); };
-  const put = (arr, id, d)=>{ const i = arr.findIndex(x=>x.id===id); if(i>=0) arr[i] = {...arr[i], ...d}; else arr.push({ id, ...d }); };
+  const put = (arr, id, d)=>{ const i = arr.findIndex(x=>x.id===id); if(i>=0) arr[i] = {...arr[i], ...d, ...(d.ratings ? { ratings:{ ...(arr[i].ratings||{}), ...d.ratings } } : {})}; else arr.push({ id, ...d }); };
   return {
     start(onUser){ setTimeout(()=>onUser({ uid:"demo", name:"Demo", photo:"" }), 200); },
     async login(){}, async logout(){ location.hash=""; location.reload(); }, stop(){},
@@ -584,7 +605,7 @@ function itemMeta(i, opts={}){
     ...tagsOf(i).map(t=>`<span class="tag">${esc(t)}</span>`),
     linksHtml(i),
     i.done ? `<span class="chip">Hecho ${i.doneAt?fmtDate(i.doneAt):""}</span>` : "",
-    i.done && i.rating ? `<span class="stars" aria-label="${i.rating} de 5">${starsTxt(i.rating)}</span>` : "",
+    i.done ? avgHtml(i) : "",
     !opts.short && by ? `<span>Agregó ${esc(by.split(" ")[0])}</span>` : ""
   ].filter(Boolean).join("");
 }
@@ -698,7 +719,7 @@ function albumHtml(rows){
     <button type="button" class="acard" data-mem="${esc(i.id)}">
       <span class="aimg" style="--cc:${listColor(i.list)}">${i.hasPhoto ? `<img data-ph="${esc(i.id)}" alt="">` : ""}<span class="acat">${esc(catOf(i.list).one)}</span></span>
       <span class="at">${esc(i.title)}</span>
-      <span class="as">${i.rating ? `<span class="stars">${"★".repeat(i.rating)}</span> ` : ""}${i.doneAt ? esc(new Date(i.doneAt).toLocaleDateString("es-AR",{ day:"numeric", month:"short" })) : ""}${i.zona ? " · " + esc(i.zona) : ""}</span>
+      <span class="as">${avgRating(i) ? avgHtml(i, true) + " " : ""}${i.doneAt ? esc(new Date(i.doneAt).toLocaleDateString("es-AR",{ day:"numeric", month:"short" })) : ""}${i.zona ? " · " + esc(i.zona) : ""}</span>
     </button>`).join("")}</li>`).join("");
 }
 
@@ -1247,23 +1268,20 @@ $("scrim").addEventListener("click", e=>{ if(e.target.id==="scrim") closeSheet()
 document.addEventListener("keydown", e=>{ if(e.key==="Escape" && !$("scrim").hidden) closeSheet(); });
 
 function itemForm(item, pre={}){
-  const src = pre.again;
-  const it = item || (src ? { list:src.list, title:src.title||"", note:src.note||"", zona:src.zona||"", tags:tagsOf(src).slice(), link:src.link||"", maps:src.maps||"", price:src.price||0, lat:src.lat, lng:src.lng }
-    : { list:pre.list||state.tab, title:pre.title||"", note:pre.note||"", zona:pre.zona||"", tags:[], link:pre.link||"", maps:"", price:0 });
+  const it = item || { list:pre.list||state.tab, title:pre.title||"", note:pre.note||"", zona:pre.zona||"", tags:[], link:pre.link||"", maps:"", price:0 };
   const lk = linksOf(it);
   let tags = tagsOf(it).slice(), list = it.list, price = it.price||0;
   let loc = hasLoc(it) ? { lat:it.lat, lng:it.lng } : null;
   const zonas = allZonas();
   openSheet(`
-    <h2>${item?"Editar":src?"Hacerlo de nuevo":pre.fromShare?"Guardar lo compartido":"Agregar"}</h2>
-    ${src ? `<span class="hint" style="margin-top:-8px">Vuelve a Por hacer como algo nuevo. El recuerdo de la vez anterior queda en Hechos.</span>` : ""}
+    <h2>${item?"Editar":pre.fromShare?"Guardar lo compartido":"Agregar"}</h2>
     <form id="itemForm" style="display:flex;flex-direction:column;gap:14px">
       ${!item && state.lists.length>1 ? `<label>Guardar en<select id="fGid">${state.lists.map(l=>`<option value="${esc(l.id)}" ${l.id===state.gid?"selected":""}>${l.private?"🔒 ":""}${esc(l.name||"Lista")}</option>`).join("")}</select></label>` : ""}
       <div class="lbl">Qué tipo
         <div class="pills" role="group" aria-label="Categoría" id="catPills"></div>
         <div class="addtag" id="catNewBox" hidden><input id="catNew" type="text" maxlength="28" placeholder="Ej.: Ferias, Museos, Shows" aria-label="Nueva categoría"><button type="button" id="catNewOk">Crear</button></div></div>
       <div class="lbl capbox">
-        <button type="button" class="linkbtn" id="capOpen" ${pre.fromShare||src?"hidden":""}>📋 Completar con la descripción del reel</button>
+        <button type="button" class="linkbtn" id="capOpen" ${pre.fromShare?"hidden":""}>📋 Completar con la descripción del reel</button>
         <div id="capPanel" ${pre.fromShare?"":"hidden"} style="display:flex;flex-direction:column;gap:8px">
           <label>Descripción del reel<textarea id="fCap" maxlength="5000" placeholder="Pegá la descripción del reel o dictá lo que dicen: barrio, nombre del lugar, dirección…"></textarea></label>
           <div class="row" style="gap:8px">${navigator.clipboard && navigator.clipboard.readText ? `<button type="button" class="btn ghost" id="capPaste">Pegar</button>` : ""}<button type="button" class="btn ghost" id="capGo">Completar</button></div>
@@ -1295,13 +1313,12 @@ function itemForm(item, pre={}){
       ${item ? `<div class="lbl">Planes
         <span class="hint">${(()=>{ const inP = state.plans.filter(p=>(p.stops||[]).includes(item.id)); return inP.length ? "Está en: " + inP.map(p=>esc(p.title)).join(", ") : "No está en ningún plan."; })()}</span>
         <div class="row" style="gap:8px">${state.plans.some(p=>!(p.stops||[]).includes(item.id)) ? `<select id="fPlan" aria-label="Sumar a un plan"><option value="">Sumar a un plan…</option>${sortedPlans().filter(p=>!(p.stops||[]).includes(item.id)).map(p=>`<option value="${esc(p.id)}">${esc(p.title)}</option>`).join("")}</select>` : ""}<button type="button" class="btn ghost" id="fNewPlan">Nuevo plan con esto</button></div></div>` : ""}
-      ${item && item.done ? `<button type="button" class="linkbtn" id="fMem">Cambiar fecha, puntaje, foto o recuerdo →</button><button type="button" class="linkbtn" id="fAgain">🔁 Hacerlo de nuevo</button>` : ""}
+      ${item && item.done ? `<button type="button" class="linkbtn" id="fMem">Cambiar fecha, puntaje, foto o recuerdo →</button>` : ""}
       <div class="err" id="fErr" hidden></div>
-      <div class="row"><button type="button" class="btn ghost" id="fCancel">Cancelar</button><button type="submit" class="btn primary">${item?"Guardar":src?"Sumar a Por hacer":"Agregar"}</button></div>
+      <div class="row"><button type="button" class="btn ghost" id="fCancel">Cancelar</button><button type="submit" class="btn primary">${item?"Guardar":"Agregar"}</button></div>
       ${item?`<div class="row" id="delRow"><button type="button" class="btn danger" id="fDel">Borrar</button></div>`:""}
     </form>`);
   const sh = $("sheet");
-  if($("fAgain")) $("fAgain").onclick = ()=>itemForm(null, { again:item });
   wireTime("fTime");
   const showErr = m => { $("fErr").hidden=false; $("fErr").textContent=m; };
 
@@ -1517,13 +1534,13 @@ async function shrinkToDataUrl(file){
 }
 
 function doneSheet(item){
-  let rating = item.rating || 0, file = null, removePhoto = false;
+  let rating = item.done ? myRating(item) : 0, file = null, removePhoto = false;
   const today = new Date().toISOString().slice(0,10);
   const curDate = item.doneAt ? new Date(item.doneAt).toISOString().slice(0,10) : today;
   openSheet(`
     <h2>${item.done?"Recuerdo":"¡Hecho!"}</h2>
     <div class="note" style="margin-top:-8px">${esc(item.title)}</div>
-    <div class="lbl">¿Qué tal estuvo?
+    <div class="lbl">${item.done ? "Tu puntaje" : "¿Qué tal estuvo?"}
       <div class="starpick" id="sp">${[1,2,3,4,5].map(n=>`<button type="button" data-s="${n}" aria-label="${n} de 5">★</button>`).join("")}</div></div>
     <label>Fecha<input id="dDate" type="date" value="${curDate}" max="${today}"></label>
     <label>Recuerdo<textarea id="dMem" maxlength="500" placeholder="Qué pidieron, qué les gustó, algo para acordarse…">${esc(item.memory)}</textarea></label>
@@ -1548,7 +1565,7 @@ function doneSheet(item){
   $("dOk").onclick = async ()=>{
     const btn = $("dOk"); btn.disabled = true;
     const d = $("dDate").value;
-    const data = { done:true, rating, doneAt: d ? new Date(d+"T12:00:00").getTime() : Date.now(), memory:$("dMem").value.trim() };
+    const data = { done:true, ratings:{ [state.me.uid]: rating }, doneAt: d ? new Date(d+"T12:00:00").getTime() : Date.now(), memory:$("dMem").value.trim() };
     try{
       if(file){
         btn.textContent = "Guardando foto…";
@@ -1558,6 +1575,7 @@ function doneSheet(item){
         store.setPhoto(item.id, url).catch(()=>toast("La foto se va a subir cuando vuelva la conexión."));
         data.hasPhoto = true;
       } else if(removePhoto){ data.hasPhoto = false; photoCache.delete(item.id); store.delPhoto(item.id); }
+      item.ratings = { ...(item.ratings || {}), [state.me.uid]: rating };
       store.save(item.id, data);
       closeSheet(); render();
     }catch(e){
@@ -1572,17 +1590,35 @@ function doneSheet(item){
 function photoSheet(item){
   const sub = [catOf(item.list).one, item.zona, item.doneAt ? fmtDate(item.doneAt) : ""].filter(Boolean).join(" · ");
   openSheet(`<h2>${esc(item.title)}</h2>
-    <div class="note" style="margin-top:-8px">${esc(sub)}${item.rating ? ` · <span class="stars">${starsTxt(item.rating)}</span>` : ""}</div>
+    <div class="note" style="margin-top:-8px">${esc(sub)}</div>
+    ${item.done ? `<div class="rates" id="rates"></div>` : ""}
     ${item.hasPhoto ? `<img class="bigimg" data-ph="${esc(item.id)}" alt="Foto de ${esc(item.title)}">` : ""}
     ${item.memory ? `<div class="memory" style="margin-top:0">${esc(item.memory)}</div>` : `<span class="hint">Todavía no tiene recuerdo ni foto.</span>`}
     <div class="row"><button type="button" class="btn ghost" id="phClose">Cerrar</button><button type="button" class="btn primary" id="phEdit">${item.hasPhoto || item.memory ? "Editar recuerdo" : "Sumar foto o recuerdo"}</button></div>
-    ${item.done ? `<button type="button" class="btn ghost" id="phAgain" style="width:100%">🔁 Hacerlo de nuevo</button>` : ""}
+
     <div class="row"><button type="button" class="linkbtn" id="phMore" style="text-align:center">Ver todo y editar</button>${item.done ? `<button type="button" class="linkbtn" id="phUndo" style="text-align:center">Volver a Por hacer</button>` : ""}</div>`);
   hydratePhotos($("sheet"));
   $("phClose").onclick = closeSheet;
+  if($("rates")){
+    const info = state.group?.memberInfo || {}, me = state.me.uid, many = (state.group?.members || []).length > 1;
+    const nameOf = u => u===me ? "Vos" : u==="_" ? "Antes" : ((info[u]?.name || "Alguien").split(" ")[0]);
+    const paint = ()=>{
+      const r = ratingsOf(item), mine = r[me] || 0, others = Object.entries(r).filter(([u])=>u!==me);
+      $("rates").innerHTML = `
+        <div class="rrow"><span class="rwho">${many ? "Tu puntaje" : "Puntaje"}</span>
+          <div class="starpick" role="group" aria-label="Tu puntaje">${[1,2,3,4,5].map(n=>`<button type="button" data-r="${n}" class="${n<=mine?"on":""}" aria-label="${n} de 5">★</button>`).join("")}</div></div>
+        ${others.map(([u,n])=>`<div class="rrow"><span class="rwho">${esc(nameOf(u))}</span><span class="stars">${starsTxt(n)}</span></div>`).join("")}
+        ${others.length ? `<div class="ravg">Promedio ${avgHtml(item)}</div>` : many && !mine ? `<span class="hint">Cada uno pone su puntaje; se ve el de todos.</span>` : ""}`;
+      $("rates").querySelectorAll("[data-r]").forEach(b=>b.onclick = ()=>{
+        const n = +b.dataset.r, cur = ratingsOf(item)[me] || 0;
+        rateItem(item, cur===n ? 0 : n); paint(); render();
+        toast(cur===n ? "Sacaste tu puntaje" : "Puntaje guardado");
+      });
+    };
+    paint();
+  }
   if($("phUndo")) $("phUndo").onclick = ()=>{ store.save(item.id, { done:false, doneAt:0 }); closeSheet(); toast("Volvió a Por hacer"); };
   $("phEdit").onclick = ()=>doneSheet(item);
-  if($("phAgain")) $("phAgain").onclick = ()=>itemForm(null, { again:item });
   $("phMore").onclick = ()=>itemForm(item);
 }
 

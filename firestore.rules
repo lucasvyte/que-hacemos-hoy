@@ -33,7 +33,8 @@ service cloud.firestore {
         && optNum(d, 'price') && optNum(d, 'rating')
         && optNum(d, 'createdAt') && optNum(d, 'doneAt')
         && optStr(d, 'date', 10) && optStr(d, 'time', 5)
-        && (!('likes' in d) || (d.likes is list && d.likes.size() <= 10));
+        && (!('likes' in d) || (d.likes is list && d.likes.size() <= 10))
+        && (!('ratings' in d) || (d.ratings is map && d.ratings.size() <= 10));
     }
 
     // Cada persona solo ve y cambia su propio perfil (en qué lista está)
