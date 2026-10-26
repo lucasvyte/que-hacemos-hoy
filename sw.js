@@ -1,5 +1,5 @@
 /* Service worker: guarda la app para abrirla sin conexión. Cambiar CACHE en cada versión. */
-const CACHE = "qhh-0.16.1";
+const CACHE = "qhh-0.16.2";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "caption.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => {
@@ -34,13 +34,21 @@ self.addEventListener("push", e => {
     lang: "es-AR"
   }));
 });
-/* Tocar el aviso: si la app está abierta la trae al frente y abre eso; si no, la abre ahí */
+/* Tocar el aviso: abre la app directo en lo que se creó (?g=lista&i=ítem o &p=plan).
+   En Android siempre se abre de nuevo: traer al frente una ventana que estaba en segundo plano
+   a veces deja la pantalla en negro. En la compu, si la app ya está abierta, se usa esa. */
 self.addEventListener("notificationclick", e => {
   e.notification.close();
   const url = new URL((e.notification.data && e.notification.data.url) || "./", self.registration.scope).href;
-  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(list => {
-    const c = list.find(w => w.url.startsWith(self.registration.scope));
-    if (c) { c.postMessage({ qhhOpen: url }); return c.focus(); }
-    return self.clients.openWindow(url);
-  }));
+  const android = /Android/i.test(self.navigator.userAgent);
+  e.waitUntil((async () => {
+    if (!android) {
+      const list = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      const c = list.find(w => w.url.startsWith(self.registration.scope));
+      if (c) {
+        try { await c.focus(); c.postMessage({ qhhOpen: url }); return; } catch {}
+      }
+    }
+    await self.clients.openWindow(url);
+  })());
 });
