@@ -17,11 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.16.0";
+const VERSION = "0.16.1";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
-const PUSH_URL = "";
+const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
+  ["0.16.1","Los avisos ya funcionan: tocá “🔔 Activar avisos” para que te lleguen."],
   ["0.16.0","Avisos: cuando alguien suma algo o arma un plan en una lista compartida, a los demás les llega una notificación al celular. Tocándola se abre eso mismo. Se activan con “🔔 Activar avisos”."],
   ["0.15.0","Las secciones pasan abajo, como en cualquier app: Para hacer, Mapa y Calendario. Los barrios están adentro del Mapa, con “¿Qué tenemos cerca?”. Arriba aparece lo que tienen hoy y el finde, con una idea. Cada uno marca con ♥ lo que le copa, y lo que les gusta a los dos sube primero. Lo que agregás desde Para descubrir entra con su fecha al Calendario. Hechos ahora es un álbum de recuerdos por mes."],
   ["0.14.2","El botón Atrás del celular cierra lo que tengas abierto (una ventana, el reloj, Juntar ideas, otra pestaña) en vez de salir de la app."],
