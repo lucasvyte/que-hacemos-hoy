@@ -379,3 +379,6 @@ html,body{overflow-x:hidden}
 .filters select{max-width:100%}
 /* "Elegir día": el campo de fecha está escondido; el botón abre el calendario */
 input.ghostdate{position:absolute;width:1px;height:1px;padding:0;border:0;opacity:0;pointer-events:none}
+/* manija de las hojas que se cierran deslizando para abajo */
+.grab{display:block;width:44px;height:5px;border-radius:3px;background:var(--line);margin:-10px auto -4px;flex:none}
+.sheet{overscroll-behavior:contain}

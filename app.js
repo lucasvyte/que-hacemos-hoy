@@ -17,11 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.19.4";
+const VERSION = "0.19.5";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
 const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
+  ["0.19.5","Para descubrir, el dado, los recuerdos y los barrios se cierran deslizándolos para abajo (tienen una rayita arriba)."],
   ["0.19.4","Para descubrir: “📅 Elegir día” vuelve a ser un botón simple; al tocarlo se abre el calendario."],
   ["0.19.3","Todo entra en la pantalla: las pestañas de tipos y los filtros ya no se deslizan de costado, se acomodan en varias filas."],
   ["0.19.2","Para descubrir: los días quedan más simples, Hoy, Mañana o elegir el día que quieras."],
@@ -841,7 +842,7 @@ function zonaSheet(key){
     }).join("");
     const nDone = g.items.filter(i=>i.done).length;
     openSheet(`
-      <h2>${esc(g.name)}</h2>
+      <i class="grab" aria-hidden="true"></i><h2>${esc(g.name)}</h2>
       <div class="pills"><button type="button" class="pill" id="zP" aria-pressed="${!showDone}">Por hacer</button><button type="button" class="pill" id="zD" aria-pressed="${showDone}">Hechos (${nDone})</button></div>
       ${secs || `<div class="empty"><b>${showDone?"Nada hecho todavía":"Nada por hacer"}</b></div>`}
       <div class="row"><button type="button" class="btn ghost" id="zClose">Cerrar</button><button type="button" class="btn primary" id="zAdd">+ Agregar${g.key===NOZONA?"":" en "+esc(g.name)}</button></div>`);
@@ -1312,7 +1313,32 @@ function openSheet(html){
   $("sheet").innerHTML = html; $("scrim").hidden = false; $("sheet").scrollTop = 0;
   ensureGuard();
 }
-function closeSheet(){ if(sheetMap){ sheetMap.remove(); sheetMap = null; } $("scrim").hidden = true; $("sheet").innerHTML = ""; releaseGuard(); }
+/* deslizar para abajo cierra las hojas que tienen la manija (.grab): Para descubrir, el dado, recuerdos, barrios */
+(()=>{
+  const sh = $("sheet"); let y0 = null, x0 = 0, dy = 0, t0 = 0, drag = false;
+  sh.addEventListener("touchstart", e=>{
+    if(!sh.querySelector(".grab") || sh.scrollTop > 0 || e.touches.length > 1 || e.target.closest("input,textarea,select,.leaflet-container")) { y0 = null; return; }
+    y0 = e.touches[0].clientY; x0 = e.touches[0].clientX; dy = 0; t0 = Date.now(); drag = false;
+  }, { passive:true });
+  sh.addEventListener("touchmove", e=>{
+    if(y0==null) return;
+    const d = e.touches[0].clientY - y0, dx = Math.abs(e.touches[0].clientX - x0);
+    if(!drag){ if(d < 8 || dx > d || sh.scrollTop > 0){ if(d < -4 || dx > 12) y0 = null; return; } drag = true; sh.style.transition = "none"; sh.style.animation = "none"; }
+    dy = Math.max(0, d); e.preventDefault();
+    sh.style.transform = `translateY(${dy}px)`; $("scrim").style.background = `rgba(10,20,14,${.45 * Math.max(0, 1 - dy/400)})`;
+  }, { passive:false });
+  const end = ()=>{
+    if(y0==null) return; y0 = null; if(!drag) return;
+    const fast = dy / Math.max(1, Date.now() - t0) > .6;
+    sh.style.transition = "transform .18s ease-out";
+    if(dy > 110 || (fast && dy > 40)){
+      sh.style.transform = "translateY(100%)";
+      setTimeout(()=>{ closeSheet(); }, 170);
+    } else { sh.style.transform = ""; $("scrim").style.background = ""; }
+  };
+  sh.addEventListener("touchend", end); sh.addEventListener("touchcancel", end);
+})();
+function closeSheet(){ const sh = $("sheet"); sh.style.transform = sh.style.transition = sh.style.animation = ""; $("scrim").style.background = ""; if(sheetMap){ sheetMap.remove(); sheetMap = null; } $("scrim").hidden = true; $("sheet").innerHTML = ""; releaseGuard(); }
 
 /* ---------- botón Atrás del celular: cierra lo de arriba en vez de salir de la app ----------
    Mientras haya algo abierto, dejamos una entrada extra en el historial; Atrás la consume y cerramos una capa. */
@@ -1670,7 +1696,7 @@ function doneSheet(item){
 /* un recuerdo: foto, puntaje, fecha y lo que escribieron */
 function photoSheet(item){
   const sub = [catOf(item.list).one, item.zona, item.doneAt ? fmtDate(item.doneAt) : ""].filter(Boolean).join(" · ");
-  openSheet(`<h2>${esc(item.title)}</h2>
+  openSheet(`<i class="grab" aria-hidden="true"></i><h2>${esc(item.title)}</h2>
     <div class="note" style="margin-top:-8px">${esc(sub)}</div>
     ${item.done ? `<div class="rates" id="rates"></div>` : ""}
     ${item.hasPhoto ? `<img class="bigimg" data-ph="${esc(item.id)}" alt="Foto de ${esc(item.title)}">` : ""}
@@ -1836,7 +1862,7 @@ function discSheet(){
     const failed = discData ? Object.entries(discData.sources||{}).filter(([,s])=>s.ok===false).map(([k])=>k==="turismo"?"Turismo BA":"Baires Secreta") : [];
     const pill = (k, v, label) => `<button type="button" class="pill" data-df="${k}" data-dv="${esc(v)}" aria-pressed="${String(f[k])===String(v)}">${label}</button>`;
     openSheet(`
-      <h2>Para descubrir</h2>
+      <i class="grab" aria-hidden="true"></i><h2>Para descubrir</h2>
       <p class="hint" style="margin:-6px 0 0">De <a href="https://turismo.buenosaires.gob.ar/es/article/que-hacer-esta-semana" target="_blank" rel="noopener">Turismo Buenos Aires</a> y <a href="https://bairessecreta.com" target="_blank" rel="noopener">Baires Secreta</a>${upd ? " · actualizado " + esc(new Date(upd).toLocaleDateString("es-AR",{ weekday:"short", day:"numeric", month:"short" })) : ""}${failed.length ? ` · hoy no se pudo leer ${esc(failed.join(" ni "))}` : ""}.</p>
       <input id="dQ" type="search" placeholder="Buscar: teatro, Palermo, gratis…" aria-label="Buscar propuestas" value="${esc(f.q)}">
       <div class="pills" id="dDays">${pill("when","todo","Cualquier día")}${dayChips.map(([v, label])=>pill("when", v, label)).join("")}${pill("when","finde","Finde")}
@@ -1894,7 +1920,7 @@ function pickSheet(){
     const cats = [...new Set(discItems().map(d=>d.cat))].filter(Boolean);
     const pill = (k, v, label) => `<button type="button" class="pill" data-pf="${k}" data-pv="${esc(v)}" aria-pressed="${String(f[k])===String(v)}">${label}</button>`;
     openSheet(`
-      <h2>¿Qué hacemos hoy?</h2>
+      <i class="grab" aria-hidden="true"></i><h2>¿Qué hacemos hoy?</h2>
       <p class="hint" style="margin:-6px 0 0">Una idea al azar de lo que pasa en Buenos Aires.</p>
       <div class="pills">${pill("when","todo","Cualquier día")}${pill("when","hoy","Hoy")}${pill("when","finde","Finde")}<button type="button" class="pill" data-pfree aria-pressed="${f.free}">Gratis</button></div>
       ${cats.length>1 ? `<div class="pills">${pill("cat","","De todo")}${cats.map(c=>pill("cat", c, `<span class="dot" style="background:${listColor(c)}"></span>${esc(catOf(c).label)}`)).join("")}</div>` : ""}
