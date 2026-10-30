@@ -17,11 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.18.1";
+const VERSION = "0.19.0";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
 const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
+  ["0.19.0","Todo lo que agregan es una actividad, así que la pestaña “Actividades” pasa a ser “Todas”: muestra todo junto. El tipo (Para comer, Para visitar, Música…) ahora es opcional."],
   ["0.18.1","Los ♥ también avisan: cuando alguien le pone ♥ a algo, a los demás les llega una notificación (y si les copa a los dos, te lo dice)."],
   ["0.18.0","Avisos de todo: ahora también te llega una notificación cuando alguien cambia algo de la lista, lo marca como hecho, sube una foto, escribe el recuerdo, pone su puntaje o cambia un plan."],
   ["0.17.1","Puntaje de cada uno: en un recuerdo, cada persona de la lista toca las estrellas y pone su propio puntaje, sin tener que editar nada. Se ve el de todos y el promedio."],
@@ -57,7 +58,9 @@ const CHANGELOG = [
   ["0.1.0","Primera versión: tres listas compartidas, “¿Qué hacemos hoy?”, marcar como hecho con fecha y estrellas."]
 ];
 const LISTS = {
-  actividad:{label:"Actividades", one:"Actividad"},
+  /* Nomenclatura (0.19.0): todo lo de la lista es una "actividad". "actividad" es el tipo vacío
+     (sin tipo): no tiene pestaña propia, se ve en "Todas", y en las tarjetas no se muestra. */
+  actividad:{label:"Otras", one:""},
   comer:{label:"Para comer", one:"Para comer"},
   visitar:{label:"Para visitar", one:"Para visitar"},
   musica:{label:"Música", one:"Música"},
@@ -66,7 +69,7 @@ const LISTS = {
   bares:{label:"Bares", one:"Bar"},
   deporte:{label:"Deporte", one:"Deporte"}
 };
-const CORE = ["actividad","comer","visitar"];   // siempre visibles; las demás aparecen cuando tienen algo
+const CORE = ["comer","visitar"];   // siempre visibles; las demás aparecen cuando tienen algo
 /* categoría propia: se guarda como "c:Nombre" */
 const catOf = k => LISTS[k] || (String(k||"").startsWith("c:") ? { label:k.slice(2), one:k.slice(2) } : LISTS.actividad);
 function catKeys(...extra){
@@ -79,10 +82,13 @@ const BA = [-34.6037, -58.3816];
 const CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
 const MAX_MEMBERS = 10;   // tiene que coincidir con maxMembers() en firestore.rules
-const state = { items:[], plans:[], lists:[], plansLoaded:false, calPlans:{}, selecting:false, sel:new Set(), calItems:{}, pendingItem:null, calMonth:"", calDay:"", pendingPlan:null, tab:"actividad", view:"pend", q:"", zona:"", tag:"",
+const state = { items:[], plans:[], lists:[], plansLoaded:false, calPlans:{}, selecting:false, sel:new Set(), calItems:{}, pendingItem:null, calMonth:"", calDay:"", pendingPlan:null, tab:"todas", view:"pend", q:"", zona:"", tag:"",
   me:null, group:null, gid:null, loaded:false, lastPick:null, share:null, installEvt:null,
   mapShowDone:false, mapHidden:new Set(), mapFitted:false, mapZona:"", near:null, findeIdea:"" };
 const $ = id => document.getElementById(id);
+/* pestaña "Todas" = sin filtro de tipo */
+const inTab = i => state.tab==="todas" || i.list===state.tab;
+const tabKeys = () => ["todas"].concat(catKeys().filter(k=>k!=="actividad"));
 
 /* ---------- utilidades ---------- */
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -577,7 +583,7 @@ function removeItem(id){
 function maybeOpenShare(){
   if(!state.share) return;
   const s = state.share; state.share = null;
-  const guessList = isIG(s.url) || !s.url ? state.tab : state.tab;
+  const guessList = state.tab==="todas" ? "actividad" : state.tab;
   itemForm(null, { link:s.url, note:s.text, title:s.title, list:guessList, fromShare:true, caption:s.text });
 }
 
@@ -625,7 +631,7 @@ function renderFilters(){
 function itemMeta(i, opts={}){
   const by = (state.group && state.group.memberInfo && state.group.memberInfo[i.createdBy] || {}).name || "";
   return [
-    opts.showList ? `<span class="zone" style="font-weight:500"><span class="dot" style="background:${listColor(i.list)}"></span>${esc(catOf(i.list).label)}</span>` : "",
+    opts.showList && i.list!=="actividad" ? `<span class="zone" style="font-weight:500"><span class="dot" style="background:${listColor(i.list)}"></span>${esc(catOf(i.list).label)}</span>` : "",
     i.date && !i.done ? `<span class="chip">📅 ${esc(i.date===todayStr() ? "Hoy" : fmtDay(i.date))}${i.time?" · "+esc(i.time)+" h":""}</span>` : "",
     i.zona ? `<span class="zone">${PIN}${esc(i.zona)}</span>` : "",
     priceHtml(i.price),
@@ -672,9 +678,9 @@ function render(){
   if(state.view==="calendario") return renderCal();
 
   const showDone = state.view==="done", searching = !!state.q;
-  if(!catKeys().includes(state.tab)) state.tab = "actividad";
-  $("tabs").innerHTML = catKeys(state.tab).map(k=>[k, catOf(k)]).map(([k,v])=>{
-    const n = state.items.filter(i=>i.list===k && !!i.done===showDone).length;
+  if(!tabKeys().includes(state.tab)) state.tab = "todas";
+  $("tabs").innerHTML = tabKeys().map(k=>[k, k==="todas" ? { label:"Todas" } : catOf(k)]).map(([k,v])=>{
+    const n = state.items.filter(i=>(k==="todas" || i.list===k) && !!i.done===showDone).length;
     return `<button class="tab" role="tab" type="button" data-tab="${esc(k)}" aria-selected="${!searching && state.tab===k}">${esc(v.label)}<small>${n} ${showDone ? (n===1?"hecho":"hechos") : "por hacer"}</small></button>`;
   }).join("");
   const selTab = $("tabs").querySelector('[aria-selected="true"]'), tb = $("tabs");
@@ -684,7 +690,7 @@ function render(){
   const album = showDone && !searching;
   const shared = (state.group?.members||[]).length > 1;
   const loved = i => shared && likesOf(i).length >= 2;
-  const rows = state.items.filter(i=>(searching || album || i.list===state.tab) && !!i.done===showDone && matches(i))
+  const rows = state.items.filter(i=>(searching || album || inTab(i)) && !!i.done===showDone && matches(i))
     .sort((a,b)=> showDone ? (b.doneAt||0)-(a.doneAt||0) : (loved(b)?1:0)-(loved(a)?1:0) || (b.createdAt||0)-(a.createdAt||0));
   const rn = $("resnote"); rn.hidden = !searching;
   if(searching) rn.textContent = `${rows.length} resultado${rows.length===1?"":"s"} en ${showDone?"hechos":"por hacer"} de esta lista`;
@@ -702,7 +708,7 @@ function render(){
   const nLoved = showDone || searching ? 0 : rows.filter(loved).length;
   const lovedHead = (state.group?.members||[]).length===2 ? "♥ A los dos les copa" : "♥ Les copa a varios";
   list.innerHTML = rows.map((i, n)=>{
-    const meta = itemMeta(i, { showList:searching });
+    const meta = itemMeta(i, { showList:searching || state.tab==="todas" });
     const on = state.selecting && state.sel.has(i.id);
     const head = nLoved && n===0 ? `<li class="lsec love">${lovedHead}</li>` : nLoved && n===nLoved && rows.length>nLoved ? `<li class="lsec">El resto</li>` : "";
     return head + `<li class="item ${i.done?"is-done":""} ${state.selecting?"selecting":""} ${on?"picked":""} ${n<nLoved?"loved":""}" ${state.selecting?`data-sel="${esc(i.id)}"`:""}>
@@ -1298,7 +1304,7 @@ $("scrim").addEventListener("click", e=>{ if(e.target.id==="scrim") closeSheet()
 document.addEventListener("keydown", e=>{ if(e.key==="Escape" && !$("scrim").hidden) closeSheet(); });
 
 function itemForm(item, pre={}){
-  const it = item || { list:pre.list||state.tab, title:pre.title||"", note:pre.note||"", zona:pre.zona||"", tags:[], link:pre.link||"", maps:"", price:0 };
+  const it = item || { list:pre.list||(state.tab==="todas" ? "actividad" : state.tab), title:pre.title||"", note:pre.note||"", zona:pre.zona||"", tags:[], link:pre.link||"", maps:"", price:0 };
   const lk = linksOf(it);
   let tags = tagsOf(it).slice(), list = it.list, price = it.price||0;
   let loc = hasLoc(it) ? { lat:it.lat, lng:it.lng } : null;
@@ -1307,7 +1313,7 @@ function itemForm(item, pre={}){
     <h2>${item?"Editar":pre.fromShare?"Guardar lo compartido":"Agregar"}</h2>
     <form id="itemForm" style="display:flex;flex-direction:column;gap:14px">
       ${!item && state.lists.length>1 ? `<label>Guardar en<select id="fGid">${state.lists.map(l=>`<option value="${esc(l.id)}" ${l.id===state.gid?"selected":""}>${l.private?"🔒 ":""}${esc(l.name||"Lista")}</option>`).join("")}</select></label>` : ""}
-      <div class="lbl">Qué tipo
+      <div class="lbl">Qué tipo (opcional)
         <div class="pills" role="group" aria-label="Categoría" id="catPills"></div>
         <div class="addtag" id="catNewBox" hidden><input id="catNew" type="text" maxlength="28" placeholder="Ej.: Ferias, Museos, Shows" aria-label="Nueva categoría"><button type="button" id="catNewOk">Crear</button></div></div>
       <div class="lbl capbox">
@@ -1362,7 +1368,7 @@ function itemForm(item, pre={}){
   $("fAddTag").onclick = addTag;
   $("fNewTag").addEventListener("keydown", e=>{ if(e.key==="Enter"){ e.preventDefault(); addTag(); } });
   let listTouched = false;
-  const allCats = ()=>Object.keys(LISTS).concat(catKeys(list).filter(k=>!LISTS[k]));
+  const allCats = ()=>Object.keys(LISTS).filter(k=>k!=="actividad").concat(catKeys(list).filter(k=>!LISTS[k]));
   const paintCats = ()=>{
     $("catPills").innerHTML = allCats().map(k=>`<button type="button" class="pill" data-list="${esc(k)}" aria-pressed="${list===k}"><span class="dot" style="background:${listColor(k)}"></span>${esc(catOf(k).one)}</button>`).join("")
       + `<button type="button" class="pill" id="catAdd">+ Otra</button>`;
@@ -1370,7 +1376,7 @@ function itemForm(item, pre={}){
   };
   const pickList = k=>{ list=k; paintCats(); if(pin) pin.setStyle({ fillColor:listColor(list) }); };
   paintCats();
-  $("catPills").addEventListener("click", e=>{ const b = e.target.closest("[data-list]"); if(b){ listTouched = true; pickList(b.dataset.list); } });
+  $("catPills").addEventListener("click", e=>{ const b = e.target.closest("[data-list]"); if(b){ listTouched = true; pickList(list===b.dataset.list ? "actividad" : b.dataset.list); } });
   const newCat = ()=>{
     const name = $("catNew").value.trim().replace(/\s+/g," ").slice(0,28);
     if(!name) return;
@@ -1485,7 +1491,7 @@ function itemForm(item, pre={}){
     const r = parseCaption(txt, zonas), done = [];
     if(r.zona && canFill("fZonaIn","zona")){ $("fZonaIn").value = auto.zona = r.zona; zonaAuto = ""; locTxt(); done.push("barrio " + r.zona); }
     if(r.name && canFill("fTitle","title")){ $("fTitle").value = auto.title = r.name; done.push("nombre"); }
-    if(r.list && !item && !listTouched && r.list !== list){ pickList(r.list); done.push(catOf(r.list).label.toLowerCase()); }
+    if(r.list && r.list!=="actividad" && !item && !listTouched && r.list !== list){ pickList(r.list); done.push(catOf(r.list).label.toLowerCase()); }
     h.hidden = false;
     h.textContent = done.length ? "Completé: " + done.join(" · ") + ". Revisalo." : "No encontré barrio ni nombre. Completalo a mano.";
     if(r.address && (!loc || locAuto) && navigator.onLine !== false){
@@ -1543,7 +1549,7 @@ function itemForm(item, pre={}){
       const nid = store.newId(), nd = { ...data, done:false, rating:0, doneAt:0, memory:"", hasPhoto:false, createdAt:Date.now(), createdBy:state.me.uid };
       store.save(nid, nd, gid);
       notifyOthers(gid, "item", { id:nid, ...nd });
-      if(gid===state.gid){ state.tab = list; if(["done","planes","calendario"].includes(state.view)){ state.view = "pend"; } stopSelecting(true); }
+      if(gid===state.gid){ if(state.tab!=="todas") state.tab = list; if(["done","planes","calendario"].includes(state.view)){ state.view = "pend"; } stopSelecting(true); }
     }
     state.mapFitted = false;
     const other = gid!==state.gid && state.lists.find(l=>l.id===gid);
@@ -1963,7 +1969,7 @@ $("planes").addEventListener("click", e=>{
 });
 function startSelecting(){
   state.selecting = true; state.sel = new Set(); state.view = "pend";
-  if(!state.items.some(i=>i.list===state.tab && !i.done)){ const k = catKeys().find(k=>state.items.some(i=>i.list===k && !i.done)); if(k) state.tab = k; }
+  if(!state.items.some(i=>inTab(i) && !i.done)) state.tab = "todas";
   render(); toast("Tocá las ideas que querés juntar");
 }
 function stopSelecting(quiet){ state.selecting = false; state.sel = new Set(); if(!quiet) render(); }
@@ -1975,8 +1981,8 @@ $("selGo").onclick = ()=>{
 };
 $("doneSw").addEventListener("click", e=>{ const b = e.target.closest("[data-dv]"); if(b && state.view!==b.dataset.dv){
   state.view = b.dataset.dv;
-  const wantDone = state.view==="done", has = k => state.items.some(i=>i.list===k && !!i.done===wantDone);
-  if(!has(state.tab)){ const k = catKeys().find(has); if(k) state.tab = k; }   // si la categoría abierta está vacía, salta a una que tenga algo
+  const wantDone = state.view==="done";
+  if(!state.items.some(i=>inTab(i) && !!i.done===wantDone)) state.tab = "todas";   // si la categoría abierta está vacía, salta a una que tenga algo
   render();
 } });
 document.querySelectorAll(".bnav [data-view]").forEach(b=>b.onclick=()=>{
