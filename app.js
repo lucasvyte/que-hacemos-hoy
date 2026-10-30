@@ -17,11 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.19.0";
+const VERSION = "0.19.1";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
 const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
+  ["0.19.1","Para descubrir: elegí un día puntual (los próximos 14 o cualquier otro) para ver qué hay. Planes: si el otro cambia un plan mientras lo tenés abierto, se actualiza solo; ya no hace falta tocar Guardar para verlo, y al guardar no se pisan los cambios de los dos."],
   ["0.19.0","Todo lo que agregan es una actividad, así que la pestaña “Actividades” pasa a ser “Todas”: muestra todo junto. El tipo (Para comer, Para visitar, Música…) ahora es opcional."],
   ["0.18.1","Los ♥ también avisan: cuando alguien le pone ♥ a algo, a los demás les llega una notificación (y si les copa a los dos, te lo dice)."],
   ["0.18.0","Avisos de todo: ahora también te llega una notificación cuando alguien cambia algo de la lista, lo marca como hecho, sube una foto, escribe el recuerdo, pone su puntaje o cambia un plan."],
@@ -416,7 +417,7 @@ function enterGroup(gid){
       renderHeader(); render();
     },
     items => { if(state.gid !== gid) return; state.items = items; state.loaded = true; render(); maybeOpenShare(); maybeOpenPendingPlan(); },
-    plans => { if(state.gid !== gid) return; state.plans = plans; state.plansLoaded = true; if(["pend","done","planes"].includes(state.view)) render(); maybeOpenPendingPlan(); },
+    plans => { if(state.gid !== gid) return; state.plans = plans; state.plansLoaded = true; if(planSync) planSync(); if(["pend","done","planes"].includes(state.view)) render(); maybeOpenPendingPlan(); },
     e => { console.error(e); if(state.gid !== gid) return; if(e && e.code==="permission-denied") goToAnotherList(gid); else banner("Se cortó la conexión con la lista. Volvé a abrir la app."); });
 }
 
@@ -1034,8 +1035,15 @@ function routeUrl(pts){
     + (use.length>2 ? `&waypoints=${encodeURIComponent(use.slice(1,-1).map(ll).join("|"))}` : "");
 }
 
+/* paradas: mis cambios (mine, desde base) sobre lo último guardado (theirs) */
+function mergeStops(base, mine, theirs){
+  const keep = mine.filter(id=>!(base.includes(id) && !theirs.includes(id)));   // lo que el otro sacó, se va
+  return keep.concat(theirs.filter(id=>!base.includes(id) && !keep.includes(id))); // lo que el otro sumó, al final
+}
+let planSync = null;   // si hay un plan abierto: función que lo actualiza cuando cambia en la base
 function planSheet(plan, preStop, preDate){
   let stops = (plan ? plan.stops||[] : []).slice();
+  let base = plan ? { ...plan, stops:(plan.stops||[]).slice() } : null, touched = new Set();
   [].concat(preStop || []).forEach(id=>{ if(id && !stops.includes(id)) stops.push(id); });
   let layer = null;
   openSheet(`
@@ -1058,11 +1066,33 @@ function planSheet(plan, preStop, preDate){
     </div>
     <label>Nota<textarea id="plNote" maxlength="500" placeholder="Horarios, qué llevar, reservas…">${esc(plan && plan.note || "")}</textarea></label>
     <div class="err" id="plErr" hidden></div>
-    <div class="row"><button type="button" class="btn ghost" id="plCancel">Cancelar</button><button type="button" class="btn primary" id="plSave">${plan?"Guardar":"Crear plan"}</button></div>
+    <div class="row"><button type="button" class="btn ghost" id="plCancel">Cancelar</button><button type="button" class="btn primary" id="plSave">${plan?"Guardar cambios":"Crear plan"}</button></div>
+    ${plan ? `<span class="hint" style="text-align:center">Lo que cambie el otro aparece solo. Guardá solo si cambiaste algo vos.</span>` : ""}
     ${plan ? `<div class="row" id="plDelRow"><button type="button" class="btn danger" id="plDel">Borrar plan</button></div>` : ""}`);
 
   wireTime("plTime");
   const byId = id => state.items.find(i=>i.id===id);
+  const FIELDS = { title:"plTitle", date:"plDate", time:"plTime", note:"plNote" };
+  const timeTouched = ()=> $("plTime").value !== ((base && base.time) || "");
+  const dirty = ()=>{ if(plan){ if(timeTouched()) touched.add("time"); $("plSave").disabled = !touched.size; } };
+  if(plan){
+    Object.entries(FIELDS).forEach(([k, id])=>{ const el = $(id); const mark = ()=>{ touched.add(k); dirty(); };
+      el.addEventListener("input", mark); el.addEventListener("change", mark); });
+    new MutationObserver(dirty).observe($("plTimeBtn"), { childList:true, characterData:true, subtree:true });
+    dirty();
+    const sheetEl = $("plSave");
+    planSync = ()=>{
+      if(!document.body.contains(sheetEl)){ planSync = null; return; }
+      const now = state.plans.find(p=>p.id===plan.id);
+      if(!now){ planSync = null; closeSheet(); toast("Borraron este plan."); return; }
+      const ns = (now.stops||[]).slice();
+      stops = touched.has("stops") ? mergeStops(base.stops, stops, ns) : ns.slice();
+      Object.entries(FIELDS).forEach(([k, id])=>{ if(!touched.has(k) && (now[k]||"")!==(base[k]||"")){ $(id).value = now[k] || "";
+        if(k==="time"){ const b = $("plTimeBtn"); b.textContent = now.time || "--:--"; b.classList.toggle("set", !!now.time); } } });
+      base = { ...now, stops:ns };
+      paintStops();
+    };
+  }
   const paintMap = ()=>{
     const pts = stops.map(byId).filter(i=>i && hasLoc(i));
     $("plMapBox").hidden = !pts.length;
@@ -1109,16 +1139,19 @@ function planSheet(plan, preStop, preDate){
     if(b.dataset.up!=null && n>0) [stops[n-1], stops[n]] = [stops[n], stops[n-1]];
     else if(b.dataset.down!=null && n<stops.length-1) [stops[n+1], stops[n]] = [stops[n], stops[n+1]];
     else if(b.dataset.rm!=null) stops.splice(n, 1);
-    paintStops();
+    touched.add("stops"); dirty(); paintStops();
   };
   $("plAdd").onclick = ()=>{ const open = $("plPick").hidden; $("plPick").hidden = !open; $("plAdd").textContent = open ? "Listo" : "+ Sumar una parada de la lista"; if(open) paintPick(); };
   $("plQ").addEventListener("input", paintPick);
-  $("plPickList").onclick = e=>{ const b = e.target.closest("[data-pk]"); if(b && stops.length<30){ stops.push(b.dataset.pk); paintStops(); } };
+  $("plPickList").onclick = e=>{ const b = e.target.closest("[data-pk]"); if(b && stops.length<30){ stops.push(b.dataset.pk); touched.add("stops"); dirty(); paintStops(); } };
   $("plCancel").onclick = closeSheet;
+  if(plan) $("plCancel").textContent = "Cerrar";
   $("plSave").onclick = ()=>{
     const title = $("plTitle").value.trim() || ($("plDate").value ? "Plan del " + fmtDay($("plDate").value) : "");
     if(!title){ $("plErr").hidden = false; $("plErr").textContent = "Ponele un nombre o un día."; return; }
-    const data = { title, date:$("plDate").value || "", note:$("plNote").value.trim(), stops:stops.filter(byId), updatedAt:Date.now() };
+    const now = plan && state.plans.find(p=>p.id===plan.id);
+    const fin = now && touched.has("stops") ? mergeStops(base.stops, stops, now.stops||[]) : now ? (now.stops||[]) : stops;
+    const data = { title, date:$("plDate").value || "", note:$("plNote").value.trim(), stops:fin.filter(id=>byId(id) || (now && (now.stops||[]).includes(id))), updatedAt:Date.now() };
     const time = $("plTime").value || "";
     if(time && !data.date){ $("plErr").hidden = false; $("plErr").textContent = "Elegí también el día."; return; }
     if(time || (plan && plan.time)) data.time = time;
@@ -1519,6 +1552,7 @@ function itemForm(item, pre={}){
     const p = state.plans.find(x=>x.id===e.target.value); if(!p) return;
     if((p.stops||[]).length >= 30) return toast("Ese plan ya tiene 30 paradas.");
     store.savePlan(p.id, { stops:(p.stops||[]).concat(item.id), updatedAt:Date.now() });
+    notifyOthers(state.gid, "plan", { ...p, stops:(p.stops||[]).concat(item.id) }, "edit");
     toast("Sumado a " + p.title); closeSheet();
   };
   if($("fNewPlan")) $("fNewPlan").onclick = ()=>planSheet(null, item.id);
@@ -1735,8 +1769,10 @@ function nextDate(d){
   return false;
 }
 const weekendDays = ()=>{ const t = dayStart(new Date()), out = []; for(let i=0; i<7; i++){ const x = addDays(t, i); if([5,6,0].includes(x.getDay())) out.push(x); if(x.getDay()===0) break; } return out; };
+const parseYmd = s => { const [y,m,d] = s.split("-").map(Number); return dayStart(new Date(y, m-1, d)); };
 function discMatchesWhen(d, when){
   if(when==="todo") return nextDate(d) !== false;
+  if(when.startsWith("d:")) return occursOn(d, parseYmd(when.slice(2)));
   if(when==="hoy") return occursOn(d, new Date());
   return weekendDays().some(x=>occursOn(d, x));
 }
@@ -1744,7 +1780,8 @@ function discMatchesWhen(d, when){
 function sortByDay(list, when){
   const wk = weekendDays();
   return list.map(d=>{
-    const nd = when==="finde" ? (wk.find(x=>occursOn(d, x)) || null) : when==="hoy" ? dayStart(new Date()) : nextDate(d);
+    const nd = when==="finde" ? (wk.find(x=>occursOn(d, x)) || null) : when==="hoy" ? dayStart(new Date())
+      : when.startsWith("d:") ? parseYmd(when.slice(2)) : nextDate(d);
     return { d, nd, k: nd ? +nd : Infinity, r: schedOf(d).recurring ? 1 : 0, tm: schedOf(d).time || "99" };
   }).sort((a,b)=>a.k-b.k || a.r-b.r || a.tm.localeCompare(b.tm) || (b.d.posted||0)-(a.d.posted||0));
 }
@@ -1788,6 +1825,10 @@ function discSheet(){
       && discMatchesWhen(d, f.when)
       && (!f.q || norm([d.title, d.tipo, d.place, d.zona, d.when].join(" ")).includes(norm(f.q))));
     const sorted = sortByDay(rows, f.when);
+    const dayChips = Array.from({ length:14 }, (_, n)=>{ const x = new Date(); x.setDate(x.getDate()+n);
+      const wd = x.toLocaleDateString("es-AR", { weekday:"short" }).replace(".","");
+      return ["d:" + ymd(x), n===0 ? "Hoy" : n===1 ? "Mañana" : wd.charAt(0).toUpperCase() + wd.slice(1) + " " + x.getDate()]; });
+    const pickedOther = f.when.startsWith("d:") && !dayChips.some(([v])=>v===f.when);
     const upd = discData && Object.values(discData.sources||{}).map(s=>s.updated).filter(Boolean).sort().pop();
     const failed = discData ? Object.entries(discData.sources||{}).filter(([,s])=>s.ok===false).map(([k])=>k==="turismo"?"Turismo BA":"Baires Secreta") : [];
     const pill = (k, v, label) => `<button type="button" class="pill" data-df="${k}" data-dv="${esc(v)}" aria-pressed="${String(f[k])===String(v)}">${label}</button>`;
@@ -1795,7 +1836,9 @@ function discSheet(){
       <h2>Para descubrir</h2>
       <p class="hint" style="margin:-6px 0 0">De <a href="https://turismo.buenosaires.gob.ar/es/article/que-hacer-esta-semana" target="_blank" rel="noopener">Turismo Buenos Aires</a> y <a href="https://bairessecreta.com" target="_blank" rel="noopener">Baires Secreta</a>${upd ? " · actualizado " + esc(new Date(upd).toLocaleDateString("es-AR",{ weekday:"short", day:"numeric", month:"short" })) : ""}${failed.length ? ` · hoy no se pudo leer ${esc(failed.join(" ni "))}` : ""}.</p>
       <input id="dQ" type="search" placeholder="Buscar: teatro, Palermo, gratis…" aria-label="Buscar propuestas" value="${esc(f.q)}">
-      <div class="pills">${pill("when","todo","Cualquier día")}${pill("when","hoy","Hoy")}${pill("when","finde","Finde")}<button type="button" class="pill" data-dfree aria-pressed="${f.free}">Gratis</button></div>
+      <div class="pills">${pill("when","todo","Cualquier día")}${pill("when","finde","Finde")}<button type="button" class="pill" data-dfree aria-pressed="${f.free}">Gratis</button></div>
+      <div class="pills dayscroll" id="dDays">${dayChips.map(([v, label])=>pill("when", v, label)).join("")}
+        <label class="pill daypick ${pickedOther ? "on" : ""}" aria-pressed="${pickedOther}">📅 ${pickedOther ? esc(fmtDay(f.when.slice(2))) : "Otro día"}<input id="dDay" type="date" min="${ymd(new Date())}" value="${pickedOther ? esc(f.when.slice(2)) : ""}" aria-label="Elegir un día"></label></div>
       <div class="pills">${pill("src","todo","Todo")}${pill("src","turismo","Turismo BA")}${pill("src","secreta","Baires Secreta")}</div>
       ${cats.length>1 ? `<div class="pills">${pill("cat","","Todos los tipos")}${cats.map(c=>pill("cat", c, `<span class="dot" style="background:${listColor(c)}"></span>${esc(catOf(c).label)}`)).join("")}</div>` : ""}
       <div class="sec">${rows.length} propuesta${rows.length===1?"":"s"}</div>
@@ -1821,6 +1864,8 @@ function discSheet(){
     const sh = $("sheet");
     sh.querySelectorAll("[data-df]").forEach(b=>b.onclick=()=>{ f[b.dataset.df] = b.dataset.dv; draw(); });
     sh.querySelector("[data-dfree]").onclick = ()=>{ f.free = !f.free; draw(); };
+    $("dDay").onchange = e=>{ f.when = e.target.value ? "d:" + e.target.value : "todo"; draw(); };
+    { const on = $("dDays").querySelector('[aria-pressed="true"]'); if(on) $("dDays").scrollLeft = on.offsetLeft - 40; }
     let t; $("dQ").addEventListener("input", e=>{ clearTimeout(t); t = setTimeout(()=>{ f.q = e.target.value.trim(); const pos = e.target.selectionStart; draw(); $("dQ").focus(); try{ $("dQ").setSelectionRange(pos, pos); }catch{} }, 250); });
     $("dClose").onclick = closeSheet;
     sh.querySelectorAll("[data-dadd]").forEach(b=>b.onclick=()=>{
