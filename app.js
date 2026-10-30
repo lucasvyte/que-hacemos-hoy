@@ -17,11 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.20.0";
+const VERSION = "0.20.1";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
 const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
+  ["0.20.1","Los filtros de zonas y actividades miden lo que dice su texto."],
   ["0.20.0","Más simple: arriba ya no está el cuadro de tipos. Abajo del buscador quedan dos filtros: “Todas las zonas” y “Actividades”, que al tocarlo te deja elegir un tipo (Para comer, Peli…) o una etiqueta (Cena, Con amigos…)."],
   ["0.19.6","Para descubrir: menos filtros, se sacó el de la fuente (Turismo BA / Baires Secreta)."],
   ["0.19.5","Para descubrir, el dado, los recuerdos y los barrios se cierran deslizándolos para abajo (tienen una rayita arriba)."],
@@ -622,6 +623,17 @@ function matches(i){
   return true;
 }
 
+/* cada desplegable mide lo que dice la opción elegida (no la más larga) */
+function fitSelects(box){
+  box.querySelectorAll("select").forEach(sel=>{
+    const m = document.createElement("span"), cs = getComputedStyle(sel);
+    m.style.cssText = `position:absolute;visibility:hidden;white-space:nowrap;font:${cs.font};letter-spacing:${cs.letterSpacing}`;
+    m.textContent = sel.options[sel.selectedIndex]?.text || "";
+    document.body.appendChild(m);
+    sel.style.width = Math.ceil(m.getBoundingClientRect().width + parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + 24) + "px";
+    m.remove();
+  });
+}
 function renderFilters(showDone){
   const zonas = allZonas();
   const usedTags = uniq([].concat(...state.items.map(tagsOf)));
@@ -639,6 +651,7 @@ function renderFilters(showDone){
       + `</select>` +
     (active ? `<button type="button" class="fchip clear" id="fClear">Limpiar</button>` : "");
   $("filters").hidden = false;
+  fitSelects($("filters"));
 }
 
 function itemMeta(i, opts={}){
