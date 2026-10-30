@@ -17,12 +17,13 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.18.0";
+const VERSION = "0.18.1";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
 const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
-  ["0.18.0","Avisos de todo: ahora también te llega una notificación cuando alguien cambia algo de la lista, lo marca como hecho, sube una foto, escribe el recuerdo, pone su puntaje o cambia un plan. Los ♥ siguen sin avisar."],
+  ["0.18.1","Los ♥ también avisan: cuando alguien le pone ♥ a algo, a los demás les llega una notificación (y si les copa a los dos, te lo dice)."],
+  ["0.18.0","Avisos de todo: ahora también te llega una notificación cuando alguien cambia algo de la lista, lo marca como hecho, sube una foto, escribe el recuerdo, pone su puntaje o cambia un plan."],
   ["0.17.1","Puntaje de cada uno: en un recuerdo, cada persona de la lista toca las estrellas y pone su propio puntaje, sin tener que editar nada. Se ve el de todos y el promedio."],
   ["0.16.2","Arreglo: al tocar un aviso con la app abierta en segundo plano quedaba la pantalla en negro. Ahora se abre directo en lo nuevo."],
   ["0.16.1","Los avisos ya funcionan: tocá “🔔 Activar avisos” para que te lleguen."],
@@ -518,6 +519,7 @@ async function notifyOthers(gid, kind, obj, act = "new"){
       undone: [`${who} volvió a poner por hacer${where}`, [obj.title, cat]],
       photo:  [`${who} subió una foto 📷${where}`, [obj.title, mem]],
       memory: [`${who} escribió el recuerdo${where}`, [obj.title, mem]],
+      like:   [`${who} le puso ♥ a algo${where}`, [obj.title, cat, likesOf(obj).length >= 2 && (g.members||[]).every(u=>likesOf(obj).includes(u)) ? (members.length > 2 ? "¡Les copa a todos!" : "¡A los dos les copa!") : ""]],
       rate:   [`${who} puso su puntaje${where}`, [obj.title, stars || "lo sacó"]]
     };
     const [t, b] = kind==="plan"
@@ -540,6 +542,7 @@ function notifySoon(gid, kind, obj, act, ms = 4000){
   clearTimeout(notifyTimers.get(k));
   notifyTimers.set(k, setTimeout(()=>{ notifyTimers.delete(k); notifyOthers(gid, kind, obj, act); }, ms));
 }
+function cancelNotify(gid, id){ const k = gid + "/" + id; clearTimeout(notifyTimers.get(k)); notifyTimers.delete(k); }
 // tarjeta "¿Te avisamos?" en Por hacer (una sola vez por celular)
 function renderPushAsk(show){
   const box = $("pushAsk"), g = state.group;
@@ -728,6 +731,9 @@ function toggleLike(id){
   const cur = Array.isArray(it.likes) ? it.likes : [], me = state.me.uid;
   const likes = cur.includes(me) ? cur.filter(u=>u!==me) : cur.concat(me);
   it.likes = likes; store.save(id, { likes }); render();
+  // avisa solo al poner ♥ (si lo saca enseguida, no avisa)
+  if(likes.includes(me)) notifySoon(state.gid, "item", { ...it }, "like");
+  else cancelNotify(state.gid, id);
 }
 
 /* ---------- recuerdos: Hechos como álbum, por mes ---------- */
