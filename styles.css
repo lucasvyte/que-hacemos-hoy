@@ -57,12 +57,12 @@ header{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
 .dice{width:52px;height:52px;flex:none;border-radius:14px;background:var(--sun);color:var(--sun-ink);display:grid;place-items:center;transition:transform .4s}
 .hero:active .dice{transform:rotate(90deg)}
 
-.tabs{position:relative;display:flex;overflow-x:auto;scrollbar-width:none;gap:6px;background:var(--surface);padding:5px;border-radius:14px;border:1px solid var(--line)}
-.tab{flex:1 0 auto;min-width:96px;border:0;background:none;border-radius:10px;padding:9px 10px;font-weight:600;font-size:.9rem;color:var(--muted)}
+.tabs{position:relative;display:flex;flex-wrap:wrap;gap:6px;background:var(--surface);padding:5px;border-radius:14px;border:1px solid var(--line)}
+.tab{flex:1 1 auto;min-width:96px;border:0;background:none;border-radius:10px;padding:9px 10px;font-weight:600;font-size:.9rem;color:var(--muted)}
 .tab[aria-selected="true"]{background:var(--accent);color:var(--accent-ink)}
 .tab small{display:block;font-weight:500;font-size:.75rem;opacity:.8}
 
-.seg{display:flex;gap:14px;scroll-behavior:smooth;border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}
+.seg{display:flex;flex-wrap:wrap;column-gap:14px;border-bottom:1px solid var(--line)}
 .seg button{flex:none;border:0;background:none;padding:6px 0 10px;font-weight:600;color:var(--muted);border-bottom:2px solid transparent;margin-bottom:-1px}
 .seg button[aria-pressed="true"]{color:var(--ink);border-color:var(--ink)}
 
@@ -70,7 +70,7 @@ header{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
 .search{position:relative}
 .search svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);pointer-events:none}
 .search input{padding-left:38px !important;background:var(--surface) !important}
-.filters{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none}
+.filters{display:flex;flex-wrap:wrap;gap:6px}
 .filters::-webkit-scrollbar,.seg::-webkit-scrollbar{display:none}
 .filters select{width:auto;flex:none;padding:6px 10px;border-radius:999px;font-size:.85rem;font-weight:600;background:var(--surface)}
 .fchip{flex:none;border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 12px;font-weight:600;font-size:.85rem;color:var(--muted)}
@@ -374,9 +374,6 @@ textarea{resize:vertical;min-height:64px}
 .ravg{font-size:.88rem;color:var(--muted, inherit);text-align:right}
 .rcount{font-size:.8em;opacity:.75}
 
-/* 0.19.1: días en Para descubrir */
-.pills.dayscroll{flex-wrap:nowrap;overflow-x:auto;flex-shrink:0;scrollbar-width:none;padding-bottom:2px}
-.pills.dayscroll::-webkit-scrollbar{display:none}
-.pills.dayscroll .pill{flex:0 0 auto;white-space:nowrap}
-.pill.daypick{position:relative;cursor:pointer}
-.pill.daypick input{position:absolute;inset:0;opacity:0;width:100%;height:100%;cursor:pointer}
+/* Regla (0.19.3): nada se desliza de costado; todo entra en el ancho de la pantalla y se baja solo para abajo */
+html,body{overflow-x:hidden}
+.filters select{max-width:100%}

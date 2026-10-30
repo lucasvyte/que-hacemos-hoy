@@ -17,11 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.19.2";
+const VERSION = "0.19.3";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
 const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
+  ["0.19.3","Todo entra en la pantalla: las pestañas de tipos y los filtros ya no se deslizan de costado, se acomodan en varias filas."],
   ["0.19.2","Para descubrir: los días quedan más simples, Hoy, Mañana o elegir el día que quieras."],
   ["0.19.1","Para descubrir: elegí un día puntual (los próximos 14 o cualquier otro) para ver qué hay. Planes: si el otro cambia un plan mientras lo tenés abierto, se actualiza solo; ya no hace falta tocar Guardar para verlo, y al guardar no se pisan los cambios de los dos."],
   ["0.19.0","Todo lo que agregan es una actividad, así que la pestaña “Actividades” pasa a ser “Todas”: muestra todo junto. El tipo (Para comer, Para visitar, Música…) ahora es opcional."],
