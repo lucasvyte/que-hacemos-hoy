@@ -17,11 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.20.5";
+const VERSION = "0.21.0";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
 const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
+  ["0.21.0","Cerca tuyo: en el Mapa, “¿Qué tenemos cerca?” también muestra propuestas de Para descubrir (con ✨ en el mapa y “+ A mi lista”). En Para descubrir hay un botón “📍 Cerca” que ordena todo por distancia."],
   ["0.20.5","Calendario: lo que ya pasó no aparece en la lista de abajo (si tocás un día pasado, sí). En actividades y planes, “✕ Sacar fecha” para dejarlos sin día."],
   ["0.20.4","Calendario: en la lista de abajo cada cosa tiene su marca, punto para las actividades y triángulo para los planes."],
   ["0.20.2","Calendario más claro: cada día muestra un punto si hay actividades y un triángulo amarillo si hay un plan, sin importar cuántos sean."],
@@ -882,15 +883,29 @@ function marker(i){
 const zkey = i => i.zona && i.zona.trim() ? norm(i.zona) : NOZONA;
 const distM = (a, b) => { const R = 6371e3, r = x=>x*Math.PI/180, dLa = r(b.lat-a.lat), dLo = r(b.lng-a.lng);
   const h = Math.sin(dLa/2)**2 + Math.cos(r(a.lat))*Math.cos(r(b.lat))*Math.sin(dLo/2)**2; return 2*R*Math.asin(Math.sqrt(h)); };
+const NEAR_M = 5000;   // "cerca" = a menos de 5 km
 const fmtDist = m => m < 1000 ? `${Math.max(50, Math.round(m/50)*50)} m` : `${(m/1000).toFixed(1).replace(".", ",")} km`;
 function findNear(){
   if(!navigator.geolocation) return toast("Este celular no comparte la ubicación.");
   $("nearBtn").textContent = "Buscando dónde estás…";
   navigator.geolocation.getCurrentPosition(p=>{
-    state.near = { lat:p.coords.latitude, lng:p.coords.longitude }; state.mapZona = ""; state.mapFitted = true;
+    state.near = { lat:p.coords.latitude, lng:p.coords.longitude, at:Date.now() }; state.mapZona = ""; state.mapFitted = true;
     renderMap(); if(bigMap) bigMap.setView([state.near.lat, state.near.lng], 14);
     $("nearBox").scrollIntoView({ block:"nearest", behavior:"smooth" });
   }, ()=>{ toast("No pude saber dónde estás. Revisá el permiso de ubicación."); renderMap(); }, { enableHighAccuracy:true, timeout:12000, maximumAge:60000 });
+}
+/* propuestas de Para descubrir (solo las que tienen dirección) que todavía no pasaron, ordenadas por distancia */
+function discNear(me, maxM){
+  return discItems().filter(d=>typeof d.lat==="number" && typeof d.lng==="number" && nextDate(d) !== false)
+    .map(d=>({ d, m:distM(me, d) })).filter(x=>x.m <= maxM).sort((a,b)=>a.m-b.m);
+}
+const discWhenShort = d => { const nd = nextDate(d); return nd ? (ymd(nd)===todayStr() ? "hoy" : fmtDay(ymd(nd))) : ""; };
+/* pide la ubicación (o usa la última si es de hace menos de 5 minutos) */
+function getHere(){
+  if(state.near && Date.now() - (state.near.at||0) < 300000) return Promise.resolve(state.near);
+  if(!navigator.geolocation) return Promise.reject(new Error("geo"));
+  return new Promise((ok, no)=>navigator.geolocation.getCurrentPosition(p=>ok({ lat:p.coords.latitude, lng:p.coords.longitude, at:Date.now() }), no,
+    { enableHighAccuracy:true, timeout:12000, maximumAge:60000 }));
 }
 function renderNear(){
   const box = $("nearBox"), me = state.near;
@@ -899,10 +914,16 @@ function renderNear(){
   if(!me){ box.hidden = true; return; }
   const close = state.items.filter(i=>!i.done && hasLoc(i) && !state.mapHidden.has(i.list))
     .map(i=>({ i, d:distM(me, i) })).filter(x=>x.d <= 5000).sort((a,b)=>a.d-b.d).slice(0, 6);
+  const disc = discNear(me, 5000).slice(0, 6);
   box.hidden = false;
   box.innerHTML = `<div class="fh"><b>Cerca tuyo</b><button type="button" class="linkbtn" data-nearoff>Cerrar</button></div>`
+    + `<div class="sec">De tu lista</div>`
     + (close.length ? close.map(({ i, d })=>`<button type="button" class="frow" data-near="${esc(i.id)}"><span class="dot" style="background:${listColor(i.list)}"></span><span class="ft">${esc(i.title)}<small>${esc([catOf(i.list).one, i.zona].filter(Boolean).join(" · "))}</small></span><span class="fd">${fmtDist(d)}</span></button>`).join("")
-      : `<span class="hint">No tienen nada por hacer a menos de 5 km. Probá con “Para descubrir”.</span>`);
+      : `<span class="hint">No tienen nada por hacer a menos de 5 km.</span>`)
+    + `<div class="sec">✨ Para descubrir</div>`
+    + (disc.length ? disc.map(({ d, m })=>`<div class="frow"><span class="dot" style="background:${listColor(d.cat)}"></span><span class="ft"><a href="${esc(safeUrl(d.link))}" target="_blank" rel="noopener">${esc(d.title)}</a><small>${esc([d.tipo, d.free ? "Gratis" : "", discWhenShort(d)].filter(Boolean).join(" · "))}</small></span><span class="fd">${fmtDist(m)}<br>${inMyList(d) ? `<span class="hint">✓ En tu lista</span>` : `<button type="button" class="linkbtn" data-neardisc="${esc(d.id)}">+ A mi lista</button>`}</span></div>`).join("")
+      : `<span class="hint">${discData ? "No hay propuestas a menos de 5 km." : "Cargando propuestas…"}</span>`);
+  if(!discData) loadDisc().then(()=>{ if(state.near && state.view==="mapa") renderNear(); });
 }
 function renderMap(){
   const zg = zonaGroups().map(g=>({ ...g, n:g.items.filter(i=>state.mapShowDone || !i.done).length })).filter(g=>g.n);
@@ -922,6 +943,8 @@ function renderMap(){
     bigMap.on("popupopen", e=>{
       const b = e.popup.getElement().querySelector("[data-mapedit]");
       if(b) b.onclick = ()=>{ const it = state.items.find(x=>x.id===b.dataset.mapedit); if(it) itemForm(it); };
+      const a = e.popup.getElement().querySelector("[data-mapdisc]");
+      if(a) a.onclick = ()=>{ const d = discItems().find(x=>x.id===a.dataset.mapdisc); if(d && addDisc(d)){ bigMap.closePopup(); renderMap(); } };
     });
   }
   setTimeout(()=>bigMap.invalidateSize(), 60);
@@ -931,6 +954,10 @@ function renderMap(){
   if(state.near) L.circleMarker([state.near.lat, state.near.lng], { radius:8, color:"#ffffff", weight:3, fillColor:"#378ADD", fillOpacity:1 }).bindPopup("Estás acá").addTo(bigLayer);
   pts.forEach(i=>{
     marker(i).bindPopup(`<div class="title">${esc(i.title)}</div>${i.zona?`<div class="note">${esc(i.zona)}</div>`:""}<div class="links" style="margin-top:6px">${linksHtml(i)}</div><button type="button" class="linkbtn" data-mapedit="${esc(i.id)}">Ver y editar →</button>`).addTo(bigLayer);
+  });
+  if(state.near) discNear(state.near, 5000).slice(0, 15).forEach(({ d, m })=>{
+    L.marker([d.lat, d.lng], { icon:L.divIcon({ className:"discpin", html:"<span>✨</span>", iconSize:[26,26], iconAnchor:[13,13] }) })
+      .bindPopup(`<div class="title">${esc(d.title)}</div><div class="note">${esc([d.tipo, discWhenShort(d), fmtDist(m)].filter(Boolean).join(" · "))}</div><div class="links" style="margin-top:6px"><a href="${esc(safeUrl(d.link))}" target="_blank" rel="noopener">Ver más ↗</a></div>${inMyList(d) ? `<span class="hint">✓ En tu lista</span>` : `<button type="button" class="linkbtn" data-mapdisc="${esc(d.id)}">+ A mi lista</button>`}`).addTo(bigLayer);
   });
   if(pts.length && !state.mapFitted){ bigMap.fitBounds(L.latLngBounds(pts.map(i=>[i.lat,i.lng])).pad(.2), { maxZoom:15 }); state.mapFitted = true; }
   const sin = visible.filter(i=>!hasLoc(i));
@@ -1878,7 +1905,7 @@ function addDisc(d){
   return true;
 }
 function discSheet(){
-  let f = { when:"todo", free:false, cat:"" , q:"" };
+  let f = { when:"todo", free:false, cat:"" , q:"", near:null };
   const draw = ()=>{
     const all = discItems();
     const today = DAYS[new Date().getDay()];
@@ -1887,8 +1914,10 @@ function discSheet(){
     const rows = all.filter(d=>
       (!f.free || d.free) && (!f.cat || d.cat===f.cat)
       && discMatchesWhen(d, f.when)
-      && (!f.q || norm([d.title, d.tipo, d.place, d.zona, d.when].join(" ")).includes(norm(f.q))));
-    const sorted = sortByDay(rows, f.when);
+      && (!f.q || norm([d.title, d.tipo, d.place, d.zona, d.when].join(" ")).includes(norm(f.q)))
+      && (!f.near || (typeof d.lat==="number" && distM(f.near, d) <= NEAR_M)));
+    // con "Cerca": ordenadas por distancia (sin títulos por día)
+    const sorted = f.near ? rows.map(d=>({ d, nd:null, m:distM(f.near, d) })).sort((a,b)=>a.m-b.m) : sortByDay(rows, f.when);
     const dayChips = Array.from({ length:2 }, (_, n)=>{ const x = new Date(); x.setDate(x.getDate()+n);
       const wd = x.toLocaleDateString("es-AR", { weekday:"short" }).replace(".","");
       return ["d:" + ymd(x), n===0 ? "Hoy" : n===1 ? "Mañana" : wd.charAt(0).toUpperCase() + wd.slice(1) + " " + x.getDate()]; });
@@ -1901,13 +1930,14 @@ function discSheet(){
       <p class="hint" style="margin:-6px 0 0">De <a href="https://turismo.buenosaires.gob.ar/es/article/que-hacer-esta-semana" target="_blank" rel="noopener">Turismo Buenos Aires</a> y <a href="https://bairessecreta.com" target="_blank" rel="noopener">Baires Secreta</a>${upd ? " · actualizado " + esc(new Date(upd).toLocaleDateString("es-AR",{ weekday:"short", day:"numeric", month:"short" })) : ""}${failed.length ? ` · hoy no se pudo leer ${esc(failed.join(" ni "))}` : ""}.</p>
       <input id="dQ" type="search" placeholder="Buscar: teatro, Palermo, gratis…" aria-label="Buscar propuestas" value="${esc(f.q)}">
       <div class="pills" id="dDays">${pill("when","todo","Cualquier día")}${dayChips.map(([v, label])=>pill("when", v, label)).join("")}${pill("when","finde","Finde")}
-        <button type="button" class="pill daypick" id="dDayBtn" aria-pressed="${pickedOther}">📅 ${pickedOther ? esc(fmtDay(f.when.slice(2))) : "Elegir día"}</button><input id="dDay" type="date" class="ghostdate" tabindex="-1" aria-hidden="true" min="${ymd(new Date())}" value="${pickedOther ? esc(f.when.slice(2)) : ""}"><button type="button" class="pill" data-dfree aria-pressed="${f.free}">Gratis</button></div>
+        <button type="button" class="pill daypick" id="dDayBtn" aria-pressed="${pickedOther}">📅 ${pickedOther ? esc(fmtDay(f.when.slice(2))) : "Elegir día"}</button><input id="dDay" type="date" class="ghostdate" tabindex="-1" aria-hidden="true" min="${ymd(new Date())}" value="${pickedOther ? esc(f.when.slice(2)) : ""}"><button type="button" class="pill" data-dfree aria-pressed="${f.free}">Gratis</button><button type="button" class="pill" id="dNear" aria-pressed="${!!f.near}">📍 Cerca</button></div>
+      ${f.near ? `<p class="hint" style="margin:-4px 0 0">A menos de 5 km de donde estás, la más cerca primero. Solo las que tienen dirección.</p>` : ""}
       ${cats.length>1 ? `<div class="pills">${pill("cat","","Todos los tipos")}${cats.map(c=>pill("cat", c, `<span class="dot" style="background:${listColor(c)}"></span>${esc(catOf(c).label)}`)).join("")}</div>` : ""}
       <div class="sec">${rows.length} propuesta${rows.length===1?"":"s"}</div>
       <div class="disclist">${!discData ? `<div class="empty"><b>${discLoading ? "Cargando…" : "No se pudieron cargar"}</b>${discLoading ? "" : "Revisá la conexión y probá de nuevo."}</div>`
-        : rows.length ? sorted.slice(0, 120).map(({ d, nd }, idx, arr)=>{
+        : rows.length ? sorted.slice(0, 120).map(({ d, nd, m }, idx, arr)=>{
           const prev = idx ? arr[idx-1].nd : undefined;
-          const head = (idx===0 || +prev !== +nd) ? `<div class="sec dayhead">${nd ? esc(dayTitle(nd)) : "Sin fecha fija"}</div>` : "";
+          const head = f.near ? "" : (idx===0 || +prev !== +nd) ? `<div class="sec dayhead">${nd ? esc(dayTitle(nd)) : "Sin fecha fija"}</div>` : "";
           const sub = [d.tipo, d.free ? "Gratis" : ""].filter(Boolean).join(" · ");
           const where = [d.place, d.zona && !(d.place||"").includes(d.zona) ? d.zona : ""].filter(Boolean).join(" · ");
           const added = inMyList(d);
@@ -1917,7 +1947,7 @@ function discSheet(){
               <span class="dk"><span class="dot" style="background:${listColor(d.cat)}"></span>${esc(sub)}</span>
               <b>${esc(d.title)}</b>
               ${d.when ? `<span class="note">🗓 ${esc(d.when)}</span>` : ""}
-              ${where ? `<span class="note">📍 ${esc(where)}</span>` : ""}
+              ${where || m!=null ? `<span class="note">📍 ${m!=null ? `<b>${fmtDist(m)}</b>${where ? " · " : ""}` : ""}${esc(where)}</span>` : ""}
               <div class="dact"><a href="${esc(safeUrl(d.link))}" target="_blank" rel="noopener">Ver más ↗</a>
                 <button type="button" class="${added?"dadded":"dadd"}" data-dadd="${esc(d.id)}" ${added?"disabled":""}>${added ? "✓ En tu lista" : "+ A mi lista"}</button></div>
             </div></div>`;
@@ -1926,6 +1956,12 @@ function discSheet(){
     const sh = $("sheet");
     sh.querySelectorAll("[data-df]").forEach(b=>b.onclick=()=>{ f[b.dataset.df] = b.dataset.dv; draw(); });
     sh.querySelector("[data-dfree]").onclick = ()=>{ f.free = !f.free; draw(); };
+    $("dNear").onclick = ()=>{
+      if(f.near){ f.near = null; return draw(); }
+      $("dNear").textContent = "📍 Buscando…";
+      getHere().then(here=>{ f.near = here; if($("dClose")) draw(); })
+        .catch(()=>{ toast("No pude saber dónde estás. Revisá el permiso de ubicación."); if($("dNear")) $("dNear").textContent = "📍 Cerca"; });
+    };
     $("dDayBtn").onclick = ()=>{ const i = $("dDay"); try{ i.showPicker(); }catch{ i.focus(); i.click(); } };
     $("dDay").onchange = e=>{ f.when = e.target.value ? "d:" + e.target.value : "todo"; draw(); };
     let t; $("dQ").addEventListener("input", e=>{ clearTimeout(t); t = setTimeout(()=>{ f.q = e.target.value.trim(); const pos = e.target.selectionStart; draw(); $("dQ").focus(); try{ $("dQ").setSelectionRange(pos, pos); }catch{} }, 250); });
@@ -2118,6 +2154,8 @@ $("zonaChips").addEventListener("click", e=>{
 $("nearBtn").onclick = findNear;
 $("nearBox").addEventListener("click", e=>{
   if(e.target.closest("[data-nearoff]")){ state.near = null; state.mapFitted = false; return renderMap(); }
+  const nd = e.target.closest("[data-neardisc]");
+  if(nd){ const d = discItems().find(x=>x.id===nd.dataset.neardisc); if(d && addDisc(d)) renderMap(); return; }
   const b = e.target.closest("[data-near]"); if(!b) return;
   const it = state.items.find(x=>x.id===b.dataset.near); if(it) itemForm(it);
 });

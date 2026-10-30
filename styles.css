@@ -391,3 +391,9 @@ input.ghostdate{position:absolute;width:1px;height:1px;padding:0;border:0;opacit
 .cday[aria-pressed="true"] i b.mplan{box-shadow:none}
 .pcard .pd b.mact,.pcard .pd b.mplan{display:inline-block;vertical-align:middle;margin:0 2px 2px 0}
 .linkbtn.dclear{align-self:flex-start;font-size:.85rem;margin-top:2px}
+/* 0.21.0: propuestas cerca en el mapa */
+.discpin span{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:var(--surface);border:2px solid var(--sun);font-size:13px;box-shadow:0 2px 6px rgba(0,0,0,.35)}
+#nearBox .fd .linkbtn{padding:2px 0 0;font-size:.8rem}
+#nearBox .ft a{color:inherit;text-decoration:none}
+#nearBox .sec{margin-top:6px}
+.dcard .note b{font-size:inherit;font-weight:700;color:var(--ink)}
