@@ -382,3 +382,9 @@ input.ghostdate{position:absolute;width:1px;height:1px;padding:0;border:0;opacit
 /* manija de las hojas que se cierran deslizando para abajo */
 .grab{display:block;width:44px;height:5px;border-radius:3px;background:var(--line);margin:-10px auto -4px;flex:none}
 .sheet{overscroll-behavior:contain}
+/* calendario (0.20.2): punto = actividad, rayita amarilla = plan */
+.cday i{align-items:center;gap:3px}
+.cday i b,.callegend b{display:inline-block;flex:none}
+.cday i b.mact,.callegend b.mact{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+.cday i b.mplan,.callegend b.mplan{width:14px;height:5px;border-radius:3px;background:var(--sun)}
+.cday[aria-pressed="true"] i b{box-shadow:0 0 0 1px var(--bg)}

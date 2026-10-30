@@ -17,11 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.20.1";
+const VERSION = "0.20.2";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
 const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
+  ["0.20.2","Calendario más claro: cada día muestra un punto si hay actividades y una rayita amarilla si hay un plan, sin importar cuántos sean."],
   ["0.20.1","Los filtros de zonas y actividades miden lo que dice su texto."],
   ["0.20.0","Más simple: arriba ya no está el cuadro de tipos. Abajo del buscador quedan dos filtros: “Todas las zonas” y “Actividades”, que al tocarlo te deja elegir un tipo (Para comer, Peli…) o una etiqueta (Cena, Con amigos…)."],
   ["0.19.6","Para descubrir: menos filtros, se sacó el de la fuente (Turismo BA / Baires Secreta)."],
@@ -1233,7 +1234,10 @@ function renderCal(){
   for(let n=0; n<lead; n++) cells += `<span></span>`;
   for(let d=1; d<=days; d++){
     const key = `${state.calMonth}-${String(d).padStart(2,"0")}`, ps = byDay.get(key) || [];
-    cells += `<button type="button" class="cday ${key===t?"today":""} ${ps.length?"has":""}" data-day="${key}" aria-pressed="${key===state.calDay}" aria-label="${d}${ps.length?`, ${ps.length} plan${ps.length===1?"":"es"}`:""}">${d}${ps.length?`<i>${ps.slice(0,3).map(p=>`<b class="${listOf(p.gid).private?"priv":""}"></b>`).join("")}</i>`:""}</button>`;
+    const nAct = ps.filter(p=>p.isItem).length, nPlan = ps.length - nAct;
+    const lab = [nAct ? `${nAct} actividad${nAct===1?"":"es"}` : "", nPlan ? `${nPlan} plan${nPlan===1?"":"es"}` : ""].filter(Boolean).join(" y ");
+    // una marca por tipo: punto = actividad, rayita amarilla = plan (no importa cuántas haya)
+    cells += `<button type="button" class="cday ${key===t?"today":""} ${ps.length?"has":""}" data-day="${key}" aria-pressed="${key===state.calDay}" aria-label="${d}${lab?", "+lab:""}">${d}${ps.length?`<i>${nAct?`<b class="mact"></b>`:""}${nPlan?`<b class="mplan"></b>`:""}</i>`:""}</button>`;
   }
   const card = p=>{
     const l = listOf(p.gid), n = (p.stops||[]).length;
@@ -1254,7 +1258,7 @@ function renderCal(){
   $("cal").innerHTML = `
     <div class="calhead"><button type="button" class="calnav" data-calnav="-1" aria-label="Mes anterior">‹</button><b>${esc(title)}</b><button type="button" class="calnav" data-calnav="1" aria-label="Mes siguiente">›</button></div>
     <div class="calgrid">${["L","M","M","J","V","S","D"].map(d=>`<span class="cdow">${d}</span>`).join("")}${cells}</div>
-    <div class="callegend"><span><b class="dotp"></b>Compartida</span><span><b class="dotp priv"></b>Privada</span>${state.calMonth!==t.slice(0,7) || (state.calDay && state.calDay!==t)?`<button type="button" class="linkbtn" data-caltoday>Ir a hoy</button>`:""}</div>
+    <div class="callegend"><span><b class="mact"></b>Actividad</span><span><b class="mplan"></b>Plan</span>${state.calMonth!==t.slice(0,7) || (state.calDay && state.calDay!==t)?`<button type="button" class="linkbtn" data-caltoday>Ir a hoy</button>`:""}</div>
     <div class="sec">${state.calDay ? esc(fmtDay(state.calDay)) : "Todo " + esc(first.toLocaleDateString("es-AR",{ month:"long" }).replace(/^/, "en "))}</div>
     ${shown.length ? shown.map(card).join("") : `<div class="empty"><b>${loading ? "Cargando…" : state.calDay ? "Nada ese día" : "Nada este mes"}</b>${loading ? "" : state.calDay ? "Tocá <strong>+ Nuevo plan</strong> para armar uno para ese día." : "Los planes y lo que tenga día aparecen acá, de todas tus listas."}</div>`}
     ${undated.length && !state.calDay ? `<div class="sec">Sin fecha</div>${undated.map(card).join("")}` : ""}`;
