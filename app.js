@@ -17,11 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.20.4";
+const VERSION = "0.20.5";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
 const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
+  ["0.20.5","Calendario: lo que ya pasó no aparece en la lista de abajo (si tocás un día pasado, sí). En actividades y planes, “✕ Sacar fecha” para dejarlos sin día."],
   ["0.20.4","Calendario: en la lista de abajo cada cosa tiene su marca, punto para las actividades y triángulo para los planes."],
   ["0.20.2","Calendario más claro: cada día muestra un punto si hay actividades y un triángulo amarillo si hay un plan, sin importar cuántos sean."],
   ["0.20.1","Los filtros de zonas y actividades miden lo que dice su texto."],
@@ -950,6 +951,17 @@ function sinUbicarSheet(){
 
 /* ---------- reloj para elegir la hora (el del sistema corta los botones en algunos celulares) ---------- */
 const timeBtn = (id, v) => `<input type="hidden" id="${id}" value="${esc(v||"")}"><button type="button" class="tbtn ${v?"set":""}" id="${id}Btn">${v ? esc(v) : "--:--"}</button>`;
+/* "✕ Sacar fecha": borra día y hora (la fecha es opcional) */
+function wireDateClear(dateId, timeId){
+  const d = $(dateId), x = $(dateId + "X"), tm = $(timeId), tb = $(timeId + "Btn");
+  if(!d || !x) return;
+  const show = ()=>{ x.hidden = !d.value; };
+  d.addEventListener("change", show); d.addEventListener("input", show); show();
+  x.onclick = ()=>{
+    d.value = ""; if(tm) tm.value = ""; if(tb){ tb.textContent = "--:--"; tb.classList.remove("set"); }
+    d.dispatchEvent(new Event("change", { bubbles:true })); show();
+  };
+}
 function wireTime(id){
   const inp = $(id), btn = $(id+"Btn");
   if(!inp || !btn) return;
@@ -1072,6 +1084,7 @@ function planSheet(plan, preStop, preDate){
     <label>Nombre<input id="plTitle" type="text" maxlength="80" value="${esc(plan ? plan.title : "")}" placeholder="Ej.: Sábado en San Telmo"></label>
     <div class="lbl">Cuándo
       <div class="row" style="gap:8px"><input id="plDate" type="date" aria-label="Día" value="${esc(plan ? plan.date || "" : preDate || "")}">${timeBtn("plTime", plan && plan.time)}</div>
+      <button type="button" class="linkbtn dclear" id="plDateX">✕ Sacar fecha</button>
       <span class="hint">Día y hora son opcionales: podés dejarlo sin fecha.</span></div>
     <div class="lbl">Paradas, en orden
       <ol class="stops" id="plStops"></ol>
@@ -1091,7 +1104,7 @@ function planSheet(plan, preStop, preDate){
     ${plan ? `<span class="hint" style="text-align:center">Lo que cambie el otro aparece solo. Guardá solo si cambiaste algo vos.</span>` : ""}
     ${plan ? `<div class="row" id="plDelRow"><button type="button" class="btn danger" id="plDel">Borrar plan</button></div>` : ""}`);
 
-  wireTime("plTime");
+  wireTime("plTime"); wireDateClear("plDate", "plTime");
   const byId = id => state.items.find(i=>i.id===id);
   const FIELDS = { title:"plTitle", date:"plDate", time:"plTime", note:"plNote" };
   const timeTouched = ()=> $("plTime").value !== ((base && base.time) || "");
@@ -1253,7 +1266,8 @@ function renderCal(){
       ${p.note?`<span class="note">${esc(p.note)}</span>`:""}</button>`;
   };
   const inMonth = all.filter(p=>p.date && p.date.startsWith(state.calMonth)).sort((a,b)=>(a.date+(a.time||"")).localeCompare(b.date+(b.time||"")) || String(a.title).localeCompare(String(b.title),"es"));
-  const shown = state.calDay ? inMonth.filter(p=>p.date===state.calDay) : inMonth;
+  // lo que ya pasó no se lista (salvo que toques ese día en la grilla)
+  const shown = state.calDay ? inMonth.filter(p=>p.date===state.calDay) : inMonth.filter(p=>p.date >= t);
   const undated = all.filter(p=>!p.date && !p.isItem).sort((a,b)=>(b.updatedAt||0)-(a.updatedAt||0));
   const loading = state.lists.some(l=>!(l.id in state.calPlans) || !(l.id in state.calItems));
   $("cal").innerHTML = `
@@ -1408,7 +1422,8 @@ function itemForm(item, pre={}){
       </div>
       <label>Qué es<input id="fTitle" type="text" maxlength="120" required value="${esc(it.title)}" placeholder="Ej.: Parrilla en San Telmo"></label>
       <div class="lbl">Cuándo (opcional)
-        <div class="row" style="gap:8px"><input id="fDate" type="date" aria-label="Día" value="${esc(it.date||pre.date||"")}">${timeBtn("fTime", it.time)}</div></div>
+        <div class="row" style="gap:8px"><input id="fDate" type="date" aria-label="Día" value="${esc(it.date||pre.date||"")}">${timeBtn("fTime", it.time)}</div>
+        <button type="button" class="linkbtn dclear" id="fDateX">✕ Sacar fecha</button></div>
       <label>Link del reel o de la web<input id="fLink" type="url" inputmode="url" value="${esc(lk.link)}" placeholder="https://www.instagram.com/reel/…"><span class="lhint" id="fLinkHint" hidden></span></label>
       <div class="lbl where">Dónde
         <div class="addtag"><input id="locQ" type="search" placeholder="Lugar, dirección o link de Maps" aria-label="Buscar el lugar"><button type="button" id="locGo">Buscar</button></div>
@@ -1437,7 +1452,7 @@ function itemForm(item, pre={}){
       ${item?`<div class="row" id="delRow"><button type="button" class="btn danger" id="fDel">Borrar</button></div>`:""}
     </form>`);
   const sh = $("sheet");
-  wireTime("fTime");
+  wireTime("fTime"); wireDateClear("fDate", "fTime");
   const showErr = m => { $("fErr").hidden=false; $("fErr").textContent=m; };
 
   /* etiquetas */
