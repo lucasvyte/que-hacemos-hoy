@@ -17,12 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.20.2";
+const VERSION = "0.20.3";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
 const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
-  ["0.20.2","Calendario más claro: cada día muestra un punto si hay actividades y una rayita amarilla si hay un plan, sin importar cuántos sean."],
+  ["0.20.2","Calendario más claro: cada día muestra un punto si hay actividades y un triángulo amarillo si hay un plan, sin importar cuántos sean."],
   ["0.20.1","Los filtros de zonas y actividades miden lo que dice su texto."],
   ["0.20.0","Más simple: arriba ya no está el cuadro de tipos. Abajo del buscador quedan dos filtros: “Todas las zonas” y “Actividades”, que al tocarlo te deja elegir un tipo (Para comer, Peli…) o una etiqueta (Cena, Con amigos…)."],
   ["0.19.6","Para descubrir: menos filtros, se sacó el de la fuente (Turismo BA / Baires Secreta)."],
@@ -1236,7 +1236,7 @@ function renderCal(){
     const key = `${state.calMonth}-${String(d).padStart(2,"0")}`, ps = byDay.get(key) || [];
     const nAct = ps.filter(p=>p.isItem).length, nPlan = ps.length - nAct;
     const lab = [nAct ? `${nAct} actividad${nAct===1?"":"es"}` : "", nPlan ? `${nPlan} plan${nPlan===1?"":"es"}` : ""].filter(Boolean).join(" y ");
-    // una marca por tipo: punto = actividad, rayita amarilla = plan (no importa cuántas haya)
+    // una marca por tipo: punto = actividad, triángulo amarillo = plan (no importa cuántas haya)
     cells += `<button type="button" class="cday ${key===t?"today":""} ${ps.length?"has":""}" data-day="${key}" aria-pressed="${key===state.calDay}" aria-label="${d}${lab?", "+lab:""}">${d}${ps.length?`<i>${nAct?`<b class="mact"></b>`:""}${nPlan?`<b class="mplan"></b>`:""}</i>`:""}</button>`;
   }
   const card = p=>{

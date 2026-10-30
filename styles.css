@@ -386,5 +386,6 @@ input.ghostdate{position:absolute;width:1px;height:1px;padding:0;border:0;opacit
 .cday i{align-items:center;gap:3px}
 .cday i b,.callegend b{display:inline-block;flex:none}
 .cday i b.mact,.callegend b.mact{width:6px;height:6px;border-radius:50%;background:var(--accent)}
-.cday i b.mplan,.callegend b.mplan{width:14px;height:5px;border-radius:3px;background:var(--sun)}
+.cday i b.mplan,.callegend b.mplan{width:0;height:0;border-radius:0;background:none;border-left:5px solid transparent;border-right:5px solid transparent;border-bottom:8px solid var(--sun)}
 .cday[aria-pressed="true"] i b{box-shadow:0 0 0 1px var(--bg)}
+.cday[aria-pressed="true"] i b.mplan{box-shadow:none}
