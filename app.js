@@ -17,11 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.21.0";
+const VERSION = "0.21.1";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
 const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
+  ["0.21.1","Las ventanas de tus listas (cambiar, crear, sumarse) y del menú de la lista también se cierran deslizándolas para abajo."],
   ["0.21.0","Cerca tuyo: en el Mapa, “¿Qué tenemos cerca?” también muestra propuestas de Para descubrir (con ✨ en el mapa y “+ A mi lista”). En Para descubrir hay un botón “📍 Cerca” que ordena todo por distancia."],
   ["0.20.5","Calendario: lo que ya pasó no aparece en la lista de abajo (si tocás un día pasado, sí). En actividades y planes, “✕ Sacar fecha” para dejarlos sin día."],
   ["0.20.4","Calendario: en la lista de abajo cada cosa tiene su marca, punto para las actividades y triángulo para los planes."],
@@ -1311,7 +1312,7 @@ function listsSheet(){
   let priv = true;
   const draw = ()=>{
     const curName = state.group ? state.group.name || "" : "";
-    openSheet(`
+    openSheet(`<i class="grab" aria-hidden="true"></i>
       ${state.group ? `<div class="lbl">Nombre de esta lista
         <div class="addtag"><input id="rnName" type="text" maxlength="40" value="${esc(curName)}" aria-label="Nombre de esta lista" enterkeyhint="done"><button type="button" id="rnOk">Guardar</button></div></div>` : ""}
       <h2>Tus listas</h2>
@@ -2028,7 +2029,7 @@ function menuSheet(){
   const standalone = matchMedia("(display-mode: standalone)").matches;
   const n = (g.members||[]).length, alone = n <= 1, full = n >= MAX_MEMBERS;
   openSheet(`
-    <h2>${esc(g.name || "Lista")}</h2>
+    <i class="grab" aria-hidden="true"></i><h2>${esc(g.name || "Lista")}</h2>
     <div id="mRenameBox"><button type="button" class="linkbtn" id="mRename">Cambiar el nombre</button></div>
     ${g.private ? `
       <div class="lnote">🔒 <b>Lista privada.</b> Solo la ves vos: nadie se puede sumar.</div>
