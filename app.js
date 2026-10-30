@@ -17,11 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.19.5";
+const VERSION = "0.19.6";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
 const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
+  ["0.19.6","Para descubrir: menos filtros, se sacó el de la fuente (Turismo BA / Baires Secreta)."],
   ["0.19.5","Para descubrir, el dado, los recuerdos y los barrios se cierran deslizándolos para abajo (tienen una rayita arriba)."],
   ["0.19.4","Para descubrir: “📅 Elegir día” vuelve a ser un botón simple; al tocarlo se abre el calendario."],
   ["0.19.3","Todo entra en la pantalla: las pestañas de tipos y los filtros ya no se deslizan de costado, se acomodan en varias filas."],
@@ -1843,14 +1844,14 @@ function addDisc(d){
   return true;
 }
 function discSheet(){
-  let f = { when:"todo", free:false, src:"todo", cat:"" , q:"" };
+  let f = { when:"todo", free:false, cat:"" , q:"" };
   const draw = ()=>{
     const all = discItems();
     const today = DAYS[new Date().getDay()];
     const finde = ["viernes","sabado","domingo"];
     const cats = [...new Set(all.map(d=>d.cat))].filter(Boolean);
     const rows = all.filter(d=>
-      (f.src==="todo" || d.src===f.src) && (!f.free || d.free) && (!f.cat || d.cat===f.cat)
+      (!f.free || d.free) && (!f.cat || d.cat===f.cat)
       && discMatchesWhen(d, f.when)
       && (!f.q || norm([d.title, d.tipo, d.place, d.zona, d.when].join(" ")).includes(norm(f.q))));
     const sorted = sortByDay(rows, f.when);
@@ -1867,7 +1868,6 @@ function discSheet(){
       <input id="dQ" type="search" placeholder="Buscar: teatro, Palermo, gratis…" aria-label="Buscar propuestas" value="${esc(f.q)}">
       <div class="pills" id="dDays">${pill("when","todo","Cualquier día")}${dayChips.map(([v, label])=>pill("when", v, label)).join("")}${pill("when","finde","Finde")}
         <button type="button" class="pill daypick" id="dDayBtn" aria-pressed="${pickedOther}">📅 ${pickedOther ? esc(fmtDay(f.when.slice(2))) : "Elegir día"}</button><input id="dDay" type="date" class="ghostdate" tabindex="-1" aria-hidden="true" min="${ymd(new Date())}" value="${pickedOther ? esc(f.when.slice(2)) : ""}"><button type="button" class="pill" data-dfree aria-pressed="${f.free}">Gratis</button></div>
-      <div class="pills">${pill("src","todo","Todo")}${pill("src","turismo","Turismo BA")}${pill("src","secreta","Baires Secreta")}</div>
       ${cats.length>1 ? `<div class="pills">${pill("cat","","Todos los tipos")}${cats.map(c=>pill("cat", c, `<span class="dot" style="background:${listColor(c)}"></span>${esc(catOf(c).label)}`)).join("")}</div>` : ""}
       <div class="sec">${rows.length} propuesta${rows.length===1?"":"s"}</div>
       <div class="disclist">${!discData ? `<div class="empty"><b>${discLoading ? "Cargando…" : "No se pudieron cargar"}</b>${discLoading ? "" : "Revisá la conexión y probá de nuevo."}</div>`
