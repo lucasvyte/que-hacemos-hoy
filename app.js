@@ -17,11 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.19.6";
+const VERSION = "0.20.0";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
 const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
+  ["0.20.0","Más simple: arriba ya no está el cuadro de tipos. Abajo del buscador quedan dos filtros: “Todas las zonas” y “Actividades”, que al tocarlo te deja elegir un tipo (Para comer, Peli…) o una etiqueta (Cena, Con amigos…)."],
   ["0.19.6","Para descubrir: menos filtros, se sacó el de la fuente (Turismo BA / Baires Secreta)."],
   ["0.19.5","Para descubrir, el dado, los recuerdos y los barrios se cierran deslizándolos para abajo (tienen una rayita arriba)."],
   ["0.19.4","Para descubrir: “📅 Elegir día” vuelve a ser un botón simple; al tocarlo se abre el calendario."],
@@ -621,17 +622,23 @@ function matches(i){
   return true;
 }
 
-function renderFilters(){
+function renderFilters(showDone){
   const zonas = allZonas();
   const usedTags = uniq([].concat(...state.items.map(tagsOf)));
   if(state.zona && !zonas.some(z=>norm(z)===norm(state.zona))) state.zona = "";
   if(state.tag && !usedTags.some(t=>norm(t)===norm(state.tag))) state.tag = "";
-  const active = state.zona || state.tag || state.q;
+  const types = tabKeys().filter(k=>k!=="todas");
+  const n = k => state.items.filter(i=>i.list===k && !!i.done===!!showDone).length;
+  const actVal = state.tab!=="todas" ? "t:" + state.tab : state.tag ? "g:" + state.tag : "";
+  const active = state.zona || state.tag || state.q || state.tab!=="todas";
   $("filters").innerHTML =
     (zonas.length ? `<select id="fZona" aria-label="Filtrar por zona"><option value="">Todas las zonas</option>${zonas.map(z=>`<option value="${esc(z)}" ${norm(z)===norm(state.zona)?"selected":""}>${esc(z)}</option>`).join("")}</select>` : "") +
-    usedTags.map(t=>`<button type="button" class="fchip" data-tagf="${esc(t)}" aria-pressed="${norm(t)===norm(state.tag)}">${esc(t)}</button>`).join("") +
+    `<select id="fAct" aria-label="Filtrar actividades"><option value="">Actividades</option>`
+      + (types.length ? `<optgroup label="Tipo">${types.map(k=>`<option value="t:${esc(k)}" ${actVal==="t:"+k?"selected":""}>${esc(catOf(k).label)} (${n(k)})</option>`).join("")}</optgroup>` : "")
+      + (usedTags.length ? `<optgroup label="Etiquetas">${usedTags.map(t=>`<option value="g:${esc(t)}" ${actVal==="g:"+t?"selected":""}>${esc(t)}</option>`).join("")}</optgroup>` : "")
+      + `</select>` +
     (active ? `<button type="button" class="fchip clear" id="fClear">Limpiar</button>` : "");
-  $("filters").hidden = !zonas.length && !usedTags.length && !active;
+  $("filters").hidden = false;
 }
 
 function itemMeta(i, opts={}){
@@ -667,7 +674,7 @@ function render(){
   renderFinde(state.view==="pend" && !state.selecting);
   renderPushAsk(state.view==="pend" && !state.selecting);
   $("tools").hidden = $("list").hidden = !listView;
-  $("tabs").hidden = !listView || state.view==="done";   // Hechos es un álbum con todo junto
+  $("tabs").hidden = true;   // 0.20.0: el tipo se elige en el filtro "Todas las actividades" (abajo del buscador)
   $("doneSw").hidden = !inParaHacer;
   $("juntarBtn").hidden = !(inParaHacer && state.view!=="done") || state.selecting || (state.loaded && !state.items.some(i=>!i.done));
   $("nPlans").textContent = state.plansLoaded ? state.plans.length : "";
@@ -685,18 +692,12 @@ function render(){
 
   const showDone = state.view==="done", searching = !!state.q;
   if(!tabKeys().includes(state.tab)) state.tab = "todas";
-  $("tabs").innerHTML = tabKeys().map(k=>[k, k==="todas" ? { label:"Todas" } : catOf(k)]).map(([k,v])=>{
-    const n = state.items.filter(i=>(k==="todas" || i.list===k) && !!i.done===showDone).length;
-    return `<button class="tab" role="tab" type="button" data-tab="${esc(k)}" aria-selected="${!searching && state.tab===k}">${esc(v.label)}<small>${n} ${showDone ? (n===1?"hecho":"hechos") : "por hacer"}</small></button>`;
-  }).join("");
-  const selTab = $("tabs").querySelector('[aria-selected="true"]'), tb = $("tabs");
-  if(selTab && (selTab.offsetLeft < tb.scrollLeft || selTab.offsetLeft + selTab.offsetWidth > tb.scrollLeft + tb.clientWidth)) tb.scrollLeft = selTab.offsetLeft - 8;
-  renderFilters();
+  renderFilters(showDone);
 
   const album = showDone && !searching;
   const shared = (state.group?.members||[]).length > 1;
   const loved = i => shared && likesOf(i).length >= 2;
-  const rows = state.items.filter(i=>(searching || album || inTab(i)) && !!i.done===showDone && matches(i))
+  const rows = state.items.filter(i=>inTab(i) && !!i.done===showDone && matches(i))
     .sort((a,b)=> showDone ? (b.doneAt||0)-(a.doneAt||0) : (loved(b)?1:0)-(loved(a)?1:0) || (b.createdAt||0)-(a.createdAt||0));
   const rn = $("resnote"); rn.hidden = !searching;
   if(searching) rn.textContent = `${rows.length} resultado${rows.length===1?"":"s"} en ${showDone?"hechos":"por hacer"} de esta lista`;
@@ -704,7 +705,7 @@ function render(){
   const list = $("list");
   if(!state.loaded){ list.innerHTML = `<li class="empty"><b>Cargando la lista…</b>Un segundo.</li>`; return; }
   if(!rows.length){
-    list.innerHTML = (state.zona || state.tag || state.q)
+    list.innerHTML = (state.zona || state.tag || state.q || state.tab!=="todas")
       ? `<li class="empty"><b>Nada con ese filtro</b>Probá con otra búsqueda o tocá <strong>Limpiar</strong>.</li>`
       : showDone ? `<li class="empty"><b>Todavía nada hecho acá</b>Cuando completen algo, tóquenle el círculo y queda guardado con fecha, puntaje, foto y recuerdo.</li>`
       : `<li class="empty"><b>Lista vacía</b>Tocá <strong>+ Agregar</strong> o compartí un reel desde Instagram.</li>`;
@@ -2065,11 +2066,15 @@ document.querySelectorAll(".bnav [data-view]").forEach(b=>b.onclick=()=>{
 });
 $("tabs").addEventListener("click", e=>{ const b=e.target.closest("[data-tab]"); if(b){ state.tab=b.dataset.tab; if(state.q){ state.q=""; $("q").value=""; } render(); } });
 let qTimer; $("q").addEventListener("input", e=>{ clearTimeout(qTimer); qTimer = setTimeout(()=>{ state.q = e.target.value.trim(); render(); }, 150); });
-$("filters").addEventListener("change", e=>{ if(e.target.id==="fZona"){ state.zona = e.target.value; render(); } });
+$("filters").addEventListener("change", e=>{
+  if(e.target.id==="fZona"){ state.zona = e.target.value; render(); }
+  if(e.target.id==="fAct"){ const v = e.target.value;
+    state.tab = v.startsWith("t:") ? v.slice(2) : "todas"; state.tag = v.startsWith("g:") ? v.slice(2) : ""; render(); }
+});
 $("filters").addEventListener("click", e=>{
   const t = e.target.closest("[data-tagf]");
   if(t){ state.tag = norm(state.tag)===norm(t.dataset.tagf) ? "" : t.dataset.tagf; render(); return; }
-  if(e.target.closest("#fClear")){ state.zona=""; state.tag=""; state.q=""; $("q").value=""; render(); }
+  if(e.target.closest("#fClear")){ state.zona=""; state.tag=""; state.tab="todas"; state.q=""; $("q").value=""; render(); }
 });
 $("zonaChips").addEventListener("click", e=>{
   const b = e.target.closest("[data-mz]"); if(!b) return;

@@ -376,7 +376,7 @@ textarea{resize:vertical;min-height:64px}
 
 /* Regla (0.19.3): nada se desliza de costado; todo entra en el ancho de la pantalla y se baja solo para abajo */
 html,body{overflow-x:hidden}
-.filters select{max-width:100%}
+.filters select{flex:1 1 140px;min-width:0;max-width:100%;text-overflow:ellipsis}
 /* "Elegir día": el campo de fecha está escondido; el botón abre el calendario */
 input.ghostdate{position:absolute;width:1px;height:1px;padding:0;border:0;opacity:0;pointer-events:none}
 /* manija de las hojas que se cierran deslizando para abajo */
