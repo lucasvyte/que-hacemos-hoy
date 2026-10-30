@@ -17,11 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.20.3";
+const VERSION = "0.20.4";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
 const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
+  ["0.20.4","Calendario: en la lista de abajo cada cosa tiene su marca, punto para las actividades y triángulo para los planes."],
   ["0.20.2","Calendario más claro: cada día muestra un punto si hay actividades y un triángulo amarillo si hay un plan, sin importar cuántos sean."],
   ["0.20.1","Los filtros de zonas y actividades miden lo que dice su texto."],
   ["0.20.0","Más simple: arriba ya no está el cuadro de tipos. Abajo del buscador quedan dos filtros: “Todas las zonas” y “Actividades”, que al tocarlo te deja elegir un tipo (Para comer, Peli…) o una etiqueta (Cena, Con amigos…)."],
@@ -1242,11 +1243,11 @@ function renderCal(){
   const card = p=>{
     const l = listOf(p.gid), n = (p.stops||[]).length;
     if(p.isItem) return `<button type="button" class="pcard ${p.done?"is-done":""}" data-calitem="${esc(p.gid)}|${esc(p.id)}">
-      <span class="pd ${p.date<t ? "past" : ""}">${esc(p.date===t ? "Hoy" : fmtDay(p.date)) + (p.time ? " · " + esc(p.time) + " h" : "")} · <span class="dot" style="background:${listColor(p.list)}"></span> ${esc(catOf(p.list).one)}${p.done?" · hecho":""}</span>
+      <span class="pd ${p.date<t ? "past" : ""}"><b class="mact" aria-label="Actividad"></b> ${esc(p.date===t ? "Hoy" : fmtDay(p.date)) + (p.time ? " · " + esc(p.time) + " h" : "")}${catOf(p.list).one ? " · " + esc(catOf(p.list).one) : ""}${p.done?" · hecho":""}</span>
       <b>${esc(p.title)}</b>
       <span class="hint">${l.private?"🔒":"👥"} ${esc(l.name||"Lista")}${p.zona?" · "+esc(p.zona):""}</span></button>`;
     return `<button type="button" class="pcard" data-calplan="${esc(p.gid)}|${esc(p.id)}">
-      <span class="pd ${p.date && p.date<t ? "past" : ""}">${p.date ? esc(p.date===t ? "Hoy" : fmtDay(p.date)) + (p.time ? " · " + esc(p.time) + " h" : "") + " · " : ""}${n} parada${n===1?"":"s"}</span>
+      <span class="pd ${p.date && p.date<t ? "past" : ""}"><b class="mplan" aria-label="Plan"></b> ${p.date ? esc(p.date===t ? "Hoy" : fmtDay(p.date)) + (p.time ? " · " + esc(p.time) + " h" : "") + " · " : ""}${n} parada${n===1?"":"s"}</span>
       <b>${esc(p.title)}</b>
       <span class="hint">${l.private?"🔒":"👥"} ${esc(l.name||"Lista")}${p.gid===state.gid?" · abierta":""}</span>
       ${p.note?`<span class="note">${esc(p.note)}</span>`:""}</button>`;
