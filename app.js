@@ -17,11 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.17.1";
+const VERSION = "0.18.0";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
 const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
+  ["0.18.0","Avisos de todo: ahora también te llega una notificación cuando alguien cambia algo de la lista, lo marca como hecho, sube una foto, escribe el recuerdo, pone su puntaje o cambia un plan. Los ♥ siguen sin avisar."],
   ["0.17.1","Puntaje de cada uno: en un recuerdo, cada persona de la lista toca las estrellas y pone su propio puntaje, sin tener que editar nada. Se ve el de todos y el promedio."],
   ["0.16.2","Arreglo: al tocar un aviso con la app abierta en segundo plano quedaba la pantalla en negro. Ahora se abre directo en lo nuevo."],
   ["0.16.1","Los avisos ya funcionan: tocá “🔔 Activar avisos” para que te lleguen."],
@@ -108,6 +109,7 @@ function rateItem(i, n){
   const uid = state.me.uid;
   i.ratings = { ...(i.ratings || {}), [uid]: n };
   store.save(i.id, { ratings: { [uid]: n } });
+  notifySoon(state.gid, "item", { ...i }, "rate");
 }
 const initial = n => (n || "?").trim().charAt(0).toUpperCase() || "?";
 const norm = s => String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().trim();
@@ -494,7 +496,8 @@ async function disablePush(){
   }catch(e){ console.error(e); }
 }
 // kind: "item" o "plan"; obj: lo que se acaba de guardar (con su id)
-async function notifyOthers(gid, kind, obj){
+// act: "new" (default), "edit", "done", "undone", "photo", "memory", "rate"
+async function notifyOthers(gid, kind, obj, act = "new"){
   if(!PUSH_URL || DEMO_MODE || !state.me) return;
   const g = gid===state.gid && state.group ? state.group : state.lists.find(l=>l.id===gid);
   const members = (g && g.members) || [];
@@ -505,9 +508,23 @@ async function notifyOthers(gid, kind, obj){
     const where = g.name ? ` en “${g.name}”` : "";
     const when = obj.date ? (obj.date===todayStr() ? "hoy" : fmtDay(obj.date)) + (obj.time ? " " + obj.time : "") : "";
     const n = (obj.stops||[]).length;
-    const msg = kind==="plan"
-      ? { title:`${firstName(state.me.name)} armó un plan${where}`, body:[obj.title, when, n ? `${n} parada${n===1?"":"s"}` : ""].filter(Boolean).join(" · "), url:`./?g=${gid}&p=${obj.id}`, tag:"plan-"+obj.id }
-      : { title:`${firstName(state.me.name)} sumó algo${where}`, body:[obj.title, catOf(obj.list).one, when].filter(Boolean).join(" · "), url:`./?g=${gid}&i=${obj.id}`, tag:"item-"+obj.id };
+    const who = firstName(state.me.name), cat = obj.list ? catOf(obj.list).one : "";
+    const stars = obj.ratings && obj.ratings[state.me.uid] ? "★".repeat(obj.ratings[state.me.uid]) : "";
+    const mem = obj.memory ? "“" + (obj.memory.length > 70 ? obj.memory.slice(0, 68).trim() + "…" : obj.memory) + "”" : "";
+    const ITEM = {
+      new:    [`${who} sumó algo${where}`, [obj.title, cat, when]],
+      edit:   [`${who} cambió algo${where}`, [obj.title, cat, when]],
+      done:   [`${who} marcó como hecho${where}`, [obj.title, stars, obj.hasPhoto ? "con foto 📷" : ""]],
+      undone: [`${who} volvió a poner por hacer${where}`, [obj.title, cat]],
+      photo:  [`${who} subió una foto 📷${where}`, [obj.title, mem]],
+      memory: [`${who} escribió el recuerdo${where}`, [obj.title, mem]],
+      rate:   [`${who} puso su puntaje${where}`, [obj.title, stars || "lo sacó"]]
+    };
+    const [t, b] = kind==="plan"
+      ? [`${who} ${act==="edit" ? "cambió el plan" : "armó un plan"}${where}`, [obj.title, when, n ? `${n} parada${n===1?"":"s"}` : ""]]
+      : (ITEM[act] || ITEM.edit);
+    const msg = { title:t, body:b.filter(Boolean).join(" · "),
+      url: kind==="plan" ? `./?g=${gid}&p=${obj.id}` : `./?g=${gid}&i=${obj.id}`, tag:(kind==="plan" ? "plan-" : "item-") + obj.id };
     const r = await fetch(PUSH_URL, { method:"POST", headers:{ "Content-Type":"application/json", Authorization:"Bearer " + await store.idToken() },
       body:JSON.stringify({ ...msg, subs:subs.map(s=>({ id:s.id, endpoint:s.endpoint, p256dh:s.p256dh, auth:s.auth })) }) });
     if(!r.ok){ console.error("avisos:", r.status); return; }
@@ -515,6 +532,13 @@ async function notifyOthers(gid, kind, obj){
     // celulares que ya no existen (desinstalaron, sacaron el permiso): se borran
     results.filter(x=>x.status===404 || x.status===410).forEach(x=>store.delPush(gid, x.id).catch(()=>{}));
   }catch(e){ console.error(e); }
+}
+// para cosas que se tocan seguido (estrellas): espera unos segundos y manda solo el último
+const notifyTimers = new Map();
+function notifySoon(gid, kind, obj, act, ms = 4000){
+  const k = gid + "/" + obj.id;
+  clearTimeout(notifyTimers.get(k));
+  notifyTimers.set(k, setTimeout(()=>{ notifyTimers.delete(k); notifyOthers(gid, kind, obj, act); }, ms));
 }
 // tarjeta "¿Te avisamos?" en Por hacer (una sola vez por celular)
 function renderPushAsk(show){
@@ -526,7 +550,7 @@ function renderPushAsk(show){
   const who = others.length===1 ? firstName((g.memberInfo||{})[others[0]]?.name) : "alguien";
   box.hidden = false;
   box.innerHTML = `<span class="pi" aria-hidden="true">🔔</span><div class="pb"><b>¿Te avisamos?</b>
-    <span>Cuando ${esc(who)} sume algo o arme un plan, te llega una notificación al celular.</span>
+    <span>Cuando ${esc(who)} sume, cambie o marque algo como hecho, te llega una notificación al celular.</span>
     <div class="fact"><button type="button" class="linkbtn" data-pnot>Ahora no</button><button type="button" class="dadd" data-pon>Activar avisos</button></div></div>`;
 }
 // abrir lo que dice el aviso (?g=lista&i=ítem o &p=plan)
@@ -1086,7 +1110,7 @@ function planSheet(plan, preStop, preDate){
     const time = $("plTime").value || "";
     if(time && !data.date){ $("plErr").hidden = false; $("plErr").textContent = "Elegí también el día."; return; }
     if(time || (plan && plan.time)) data.time = time;
-    if(plan) store.savePlan(plan.id, data);
+    if(plan){ store.savePlan(plan.id, data); notifyOthers(state.gid, "plan", { ...plan, ...data }, "edit"); }
     else {
       const pid = store.newPlanId();
       store.savePlan(pid, { ...data, createdAt:Date.now(), createdBy:state.me.uid });
@@ -1504,7 +1528,11 @@ function itemForm(item, pre={}){
     if(time && !date) return showErr("Elegí también el día.");
     const data = { list, title, note:$("fNote").value.trim(), zona, tags, link, maps, price, lat:loc?loc.lat:null, lng:loc?loc.lng:null, date, time };
     const gid = $("fGid") ? $("fGid").value : state.gid;
-    if(item) store.save(item.id, data);
+    if(item){
+      const changed = Object.keys(data).some(k=>JSON.stringify(data[k] ?? "")!==JSON.stringify(item[k] ?? ""));
+      store.save(item.id, data);
+      if(changed) notifyOthers(state.gid, "item", { ...item, ...data, id:item.id }, "edit");
+    }
     else {
       const nid = store.newId(), nd = { ...data, done:false, rating:0, doneAt:0, memory:"", hasPhoto:false, createdAt:Date.now(), createdBy:state.me.uid };
       store.save(nid, nd, gid);
@@ -1575,8 +1603,12 @@ function doneSheet(item){
         store.setPhoto(item.id, url).catch(()=>toast("La foto se va a subir cuando vuelva la conexión."));
         data.hasPhoto = true;
       } else if(removePhoto){ data.hasPhoto = false; photoCache.delete(item.id); store.delPhoto(item.id); }
+      const wasDone = !!item.done, before = { memory:item.memory || "", rating:myRating(item), doneAt:item.doneAt || 0 };
       item.ratings = { ...(item.ratings || {}), [state.me.uid]: rating };
       store.save(item.id, data);
+      const act = !wasDone ? "done" : file ? "photo" : data.memory!==before.memory ? "memory"
+        : rating!==before.rating ? "rate" : (removePhoto || data.doneAt!==before.doneAt) ? "edit" : "";
+      if(act) notifyOthers(state.gid, "item", { ...item, ...data, ratings:item.ratings, id:item.id }, act);
       closeSheet(); render();
     }catch(e){
       btn.disabled = false; btn.textContent = "Guardar";
@@ -1617,7 +1649,7 @@ function photoSheet(item){
     };
     paint();
   }
-  if($("phUndo")) $("phUndo").onclick = ()=>{ store.save(item.id, { done:false, doneAt:0 }); closeSheet(); toast("Volvió a Por hacer"); };
+  if($("phUndo")) $("phUndo").onclick = ()=>{ store.save(item.id, { done:false, doneAt:0 }); notifyOthers(state.gid, "item", item, "undone"); closeSheet(); toast("Volvió a Por hacer"); };
   $("phEdit").onclick = ()=>doneSheet(item);
   $("phMore").onclick = ()=>itemForm(item);
 }
@@ -1855,7 +1887,7 @@ function menuSheet(){
       <div class="row"><button type="button" class="btn ghost" id="mCopy">Copiar código</button>${navigator.share?`<button type="button" class="btn ghost" id="mShare">Enviar invitación</button>`:""}</div>
       <button type="button" class="linkbtn" id="mNew">Cambiar el código (el anterior deja de servir)</button>`}
       ${alone ? `<button type="button" class="linkbtn" id="mPriv">Hacerla privada (solo vos)</button>` : ""}`}
-    ${pushAvailable() && !g.private ? `<div class="pushrow"><span aria-hidden="true">🔔</span><div><b>Avisos ${pushOn() ? "activados" : ""}</b><span class="hint">${pushOn() ? "Te avisamos en este celular cuando alguien suma algo o arma un plan en tus listas compartidas." : "Enterate cuando alguien suma algo o arma un plan."}</span></div>
+    ${pushAvailable() && !g.private ? `<div class="pushrow"><span aria-hidden="true">🔔</span><div><b>Avisos ${pushOn() ? "activados" : ""}</b><span class="hint">${pushOn() ? "Te avisamos en este celular cuando alguien suma, cambia o marca algo como hecho en tus listas compartidas." : "Enterate cuando alguien suma, cambia o marca algo como hecho."}</span></div>
       <button type="button" class="btn ${pushOn() ? "ghost" : "primary"}" id="mPush">${pushOn() ? "Apagar" : "Activar"}</button></div>` : ""}
     ${state.installEvt && !standalone ? `<button type="button" class="btn primary" id="mInstall">Instalar la app</button>` : ""}
     <div class="row" id="mDangerRow">${alone
@@ -2021,7 +2053,7 @@ $("list").addEventListener("click", e=>{
   const item = state.items.find(i=>i.id===(c||ed).dataset[c?"check":"edit"]);
   if(!item) return;
   if(ed) return itemForm(item);
-  if(item.done){ store.save(item.id, { done:false, doneAt:0 }); toast("Volvió a Por hacer"); }
+  if(item.done){ store.save(item.id, { done:false, doneAt:0 }); notifyOthers(state.gid, "item", item, "undone"); toast("Volvió a Por hacer"); }
   else doneSheet(item);
 });
 $("changelog").innerHTML = CHANGELOG.map(([v,t])=>`<li><b>${v}</b> · ${esc(t)}</li>`).join("");

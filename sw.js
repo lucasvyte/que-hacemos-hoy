@@ -1,5 +1,5 @@
 /* Service worker: guarda la app para abrirla sin conexión. Cambiar CACHE en cada versión. */
-const CACHE = "qhh-0.17.1";
+const CACHE = "qhh-0.18.0";
 const SHELL = ["./", "index.html", "styles.css", "app.js", "caption.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => {
@@ -30,6 +30,7 @@ self.addEventListener("push", e => {
     icon: "icons/icon-192.png",
     badge: "icons/badge-96.png",
     tag: d.tag || undefined,
+    renotify: !!d.tag, // si ya había un aviso de lo mismo, lo reemplaza y vuelve a sonar
     data: { url: d.url || "./" },
     lang: "es-AR"
   }));
