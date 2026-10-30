@@ -17,11 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.19.3";
+const VERSION = "0.19.4";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
 const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
+  ["0.19.4","Para descubrir: “📅 Elegir día” vuelve a ser un botón simple; al tocarlo se abre el calendario."],
   ["0.19.3","Todo entra en la pantalla: las pestañas de tipos y los filtros ya no se deslizan de costado, se acomodan en varias filas."],
   ["0.19.2","Para descubrir: los días quedan más simples, Hoy, Mañana o elegir el día que quieras."],
   ["0.19.1","Para descubrir: elegí un día puntual (los próximos 14 o cualquier otro) para ver qué hay. Planes: si el otro cambia un plan mientras lo tenés abierto, se actualiza solo; ya no hace falta tocar Guardar para verlo, y al guardar no se pisan los cambios de los dos."],
@@ -1839,7 +1840,7 @@ function discSheet(){
       <p class="hint" style="margin:-6px 0 0">De <a href="https://turismo.buenosaires.gob.ar/es/article/que-hacer-esta-semana" target="_blank" rel="noopener">Turismo Buenos Aires</a> y <a href="https://bairessecreta.com" target="_blank" rel="noopener">Baires Secreta</a>${upd ? " · actualizado " + esc(new Date(upd).toLocaleDateString("es-AR",{ weekday:"short", day:"numeric", month:"short" })) : ""}${failed.length ? ` · hoy no se pudo leer ${esc(failed.join(" ni "))}` : ""}.</p>
       <input id="dQ" type="search" placeholder="Buscar: teatro, Palermo, gratis…" aria-label="Buscar propuestas" value="${esc(f.q)}">
       <div class="pills" id="dDays">${pill("when","todo","Cualquier día")}${dayChips.map(([v, label])=>pill("when", v, label)).join("")}${pill("when","finde","Finde")}
-        <label class="pill daypick ${pickedOther ? "on" : ""}" aria-pressed="${pickedOther}">📅 ${pickedOther ? esc(fmtDay(f.when.slice(2))) : "Elegir día"}<input id="dDay" type="date" min="${ymd(new Date())}" value="${pickedOther ? esc(f.when.slice(2)) : ""}" aria-label="Elegir un día"></label><button type="button" class="pill" data-dfree aria-pressed="${f.free}">Gratis</button></div>
+        <button type="button" class="pill daypick" id="dDayBtn" aria-pressed="${pickedOther}">📅 ${pickedOther ? esc(fmtDay(f.when.slice(2))) : "Elegir día"}</button><input id="dDay" type="date" class="ghostdate" tabindex="-1" aria-hidden="true" min="${ymd(new Date())}" value="${pickedOther ? esc(f.when.slice(2)) : ""}"><button type="button" class="pill" data-dfree aria-pressed="${f.free}">Gratis</button></div>
       <div class="pills">${pill("src","todo","Todo")}${pill("src","turismo","Turismo BA")}${pill("src","secreta","Baires Secreta")}</div>
       ${cats.length>1 ? `<div class="pills">${pill("cat","","Todos los tipos")}${cats.map(c=>pill("cat", c, `<span class="dot" style="background:${listColor(c)}"></span>${esc(catOf(c).label)}`)).join("")}</div>` : ""}
       <div class="sec">${rows.length} propuesta${rows.length===1?"":"s"}</div>
@@ -1865,6 +1866,7 @@ function discSheet(){
     const sh = $("sheet");
     sh.querySelectorAll("[data-df]").forEach(b=>b.onclick=()=>{ f[b.dataset.df] = b.dataset.dv; draw(); });
     sh.querySelector("[data-dfree]").onclick = ()=>{ f.free = !f.free; draw(); };
+    $("dDayBtn").onclick = ()=>{ const i = $("dDay"); try{ i.showPicker(); }catch{ i.focus(); i.click(); } };
     $("dDay").onchange = e=>{ f.when = e.target.value ? "d:" + e.target.value : "todo"; draw(); };
     let t; $("dQ").addEventListener("input", e=>{ clearTimeout(t); t = setTimeout(()=>{ f.q = e.target.value.trim(); const pos = e.target.selectionStart; draw(); $("dQ").focus(); try{ $("dQ").setSelectionRange(pos, pos); }catch{} }, 250); });
     $("dClose").onclick = closeSheet;
