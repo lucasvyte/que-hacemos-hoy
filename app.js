@@ -17,11 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.21.1";
+const VERSION = "0.21.2";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
 const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
+  ["0.21.2","Más fácil de leer y de tocar: textos de ayuda y números con más contraste, links de las tarjetas (Cómo llegar, Ver reel) y botones chicos con más lugar para el dedo. Al agregar algo o armar un plan, el día se elige con un botón “📅 Elegir día”, como en Para descubrir."],
   ["0.21.1","Las ventanas de tus listas (cambiar, crear, sumarse) y del menú de la lista también se cierran deslizándolas para abajo."],
   ["0.21.0","Cerca tuyo: en el Mapa, “¿Qué tenemos cerca?” también muestra propuestas de Para descubrir (con ✨ en el mapa y “+ A mi lista”). En Para descubrir hay un botón “📍 Cerca” que ordena todo por distancia."],
   ["0.20.5","Calendario: lo que ya pasó no aparece en la lista de abajo (si tocás un día pasado, sí). En actividades y planes, “✕ Sacar fecha” para dejarlos sin día."],
@@ -978,6 +979,15 @@ function sinUbicarSheet(){
 }
 
 /* ---------- reloj para elegir la hora (el del sistema corta los botones en algunos celulares) ---------- */
+/* día: botón simple que abre el calendario del celular (el campo nativo no se muestra) */
+const dateBtn = (id, v) => `<span class="datebox"><button type="button" class="tbtn ${v?"set":""}" id="${id}Btn">📅 ${v ? esc(fmtDay(v)) : "Elegir día"}</button><input id="${id}" type="date" class="ghostdate" tabindex="-1" aria-hidden="true" value="${esc(v||"")}"></span>`;
+function wireDate(id){
+  const inp = $(id), btn = $(id+"Btn");
+  if(!inp || !btn) return;
+  const paint = ()=>{ btn.textContent = "📅 " + (inp.value ? fmtDay(inp.value) : "Elegir día"); btn.classList.toggle("set", !!inp.value); };
+  inp.addEventListener("change", paint); inp.addEventListener("input", paint);
+  btn.onclick = ()=>{ try{ inp.showPicker(); }catch{ inp.focus(); inp.click(); } };
+}
 const timeBtn = (id, v) => `<input type="hidden" id="${id}" value="${esc(v||"")}"><button type="button" class="tbtn ${v?"set":""}" id="${id}Btn">${v ? esc(v) : "--:--"}</button>`;
 /* "✕ Sacar fecha": borra día y hora (la fecha es opcional) */
 function wireDateClear(dateId, timeId){
@@ -1111,7 +1121,7 @@ function planSheet(plan, preStop, preDate){
     <h2>${plan ? "Plan" : "Nuevo plan"}</h2>
     <label>Nombre<input id="plTitle" type="text" maxlength="80" value="${esc(plan ? plan.title : "")}" placeholder="Ej.: Sábado en San Telmo"></label>
     <div class="lbl">Cuándo
-      <div class="row" style="gap:8px"><input id="plDate" type="date" aria-label="Día" value="${esc(plan ? plan.date || "" : preDate || "")}">${timeBtn("plTime", plan && plan.time)}</div>
+      <div class="row" style="gap:8px">${dateBtn("plDate", plan ? plan.date || "" : preDate || "")}${timeBtn("plTime", plan && plan.time)}</div>
       <button type="button" class="linkbtn dclear" id="plDateX">✕ Sacar fecha</button>
       <span class="hint">Día y hora son opcionales: podés dejarlo sin fecha.</span></div>
     <div class="lbl">Paradas, en orden
@@ -1132,7 +1142,7 @@ function planSheet(plan, preStop, preDate){
     ${plan ? `<span class="hint" style="text-align:center">Lo que cambie el otro aparece solo. Guardá solo si cambiaste algo vos.</span>` : ""}
     ${plan ? `<div class="row" id="plDelRow"><button type="button" class="btn danger" id="plDel">Borrar plan</button></div>` : ""}`);
 
-  wireTime("plTime"); wireDateClear("plDate", "plTime");
+  wireDate("plDate"); wireTime("plTime"); wireDateClear("plDate", "plTime");
   const byId = id => state.items.find(i=>i.id===id);
   const FIELDS = { title:"plTitle", date:"plDate", time:"plTime", note:"plNote" };
   const timeTouched = ()=> $("plTime").value !== ((base && base.time) || "");
@@ -1150,7 +1160,8 @@ function planSheet(plan, preStop, preDate){
       const ns = (now.stops||[]).slice();
       stops = touched.has("stops") ? mergeStops(base.stops, stops, ns) : ns.slice();
       Object.entries(FIELDS).forEach(([k, id])=>{ if(!touched.has(k) && (now[k]||"")!==(base[k]||"")){ $(id).value = now[k] || "";
-        if(k==="time"){ const b = $("plTimeBtn"); b.textContent = now.time || "--:--"; b.classList.toggle("set", !!now.time); } } });
+        if(k==="time"){ const b = $("plTimeBtn"); b.textContent = now.time || "--:--"; b.classList.toggle("set", !!now.time); }
+        if(k==="date"){ const b = $("plDateBtn"); b.textContent = "📅 " + (now.date ? fmtDay(now.date) : "Elegir día"); b.classList.toggle("set", !!now.date); $("plDateX").hidden = !now.date; } } });
       base = { ...now, stops:ns };
       paintStops();
     };
@@ -1372,9 +1383,16 @@ const joinErr = e => e && e.code==="not-found" ? "Ese código no existe. Revisá
 let sheetMap = null;
 function openSheet(html){
   if(sheetMap){ sheetMap.remove(); sheetMap = null; }
-  $("sheet").innerHTML = html; $("scrim").hidden = false; $("sheet").scrollTop = 0;
+  const sh = $("sheet");
+  if($("scrim").hidden) sheetOpener = document.activeElement;
+  sh.innerHTML = html; $("scrim").hidden = false; sh.scrollTop = 0;
+  // para lectores de pantalla: la ventana se llama como su título y el foco entra en ella
+  const h = sh.querySelector("h2");
+  if(h){ h.id = h.id || "sheetTitle"; sh.setAttribute("aria-labelledby", h.id); } else sh.removeAttribute("aria-labelledby");
+  sh.tabIndex = -1; sh.focus({ preventScroll:true });
   ensureGuard();
 }
+let sheetOpener = null;
 /* deslizar para abajo cierra las hojas que tienen la manija (.grab): Para descubrir, el dado, recuerdos, barrios */
 (()=>{
   const sh = $("sheet"); let y0 = null, x0 = 0, dy = 0, t0 = 0, drag = false;
@@ -1400,7 +1418,7 @@ function openSheet(html){
   };
   sh.addEventListener("touchend", end); sh.addEventListener("touchcancel", end);
 })();
-function closeSheet(){ const sh = $("sheet"); sh.style.transform = sh.style.transition = sh.style.animation = ""; $("scrim").style.background = ""; if(sheetMap){ sheetMap.remove(); sheetMap = null; } $("scrim").hidden = true; $("sheet").innerHTML = ""; releaseGuard(); }
+function closeSheet(){ const sh = $("sheet"); sh.style.transform = sh.style.transition = sh.style.animation = ""; $("scrim").style.background = ""; if(sheetMap){ sheetMap.remove(); sheetMap = null; } $("scrim").hidden = true; $("sheet").innerHTML = ""; const op = sheetOpener; sheetOpener = null; if(op && op.isConnected && op.focus) op.focus({ preventScroll:true }); releaseGuard(); }
 
 /* ---------- botón Atrás del celular: cierra lo de arriba en vez de salir de la app ----------
    Mientras haya algo abierto, dejamos una entrada extra en el historial; Atrás la consume y cerramos una capa. */
@@ -1450,7 +1468,7 @@ function itemForm(item, pre={}){
       </div>
       <label>Qué es<input id="fTitle" type="text" maxlength="120" required value="${esc(it.title)}" placeholder="Ej.: Parrilla en San Telmo"></label>
       <div class="lbl">Cuándo (opcional)
-        <div class="row" style="gap:8px"><input id="fDate" type="date" aria-label="Día" value="${esc(it.date||pre.date||"")}">${timeBtn("fTime", it.time)}</div>
+        <div class="row" style="gap:8px">${dateBtn("fDate", it.date||pre.date||"")}${timeBtn("fTime", it.time)}</div>
         <button type="button" class="linkbtn dclear" id="fDateX">✕ Sacar fecha</button></div>
       <label>Link del reel o de la web<input id="fLink" type="url" inputmode="url" value="${esc(lk.link)}" placeholder="https://www.instagram.com/reel/…"><span class="lhint" id="fLinkHint" hidden></span></label>
       <div class="lbl where">Dónde
@@ -1480,7 +1498,7 @@ function itemForm(item, pre={}){
       ${item?`<div class="row" id="delRow"><button type="button" class="btn danger" id="fDel">Borrar</button></div>`:""}
     </form>`);
   const sh = $("sheet");
-  wireTime("fTime"); wireDateClear("fDate", "fTime");
+  wireDate("fDate"); wireTime("fTime"); wireDateClear("fDate", "fTime");
   const showErr = m => { $("fErr").hidden=false; $("fErr").textContent=m; };
 
   /* etiquetas */

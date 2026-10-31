@@ -27,6 +27,7 @@ body{background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16p
 .wrap{max-width:560px;margin:0 auto}
 .wrap>section{display:flex;flex-direction:column;gap:16px}
 button,input,textarea,select{font:inherit;color:inherit}
+::placeholder{color:var(--muted);opacity:1}
 button{cursor:pointer}
 :focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 .muted{color:var(--muted)}
@@ -87,6 +88,8 @@ header{display:flex;align-items:flex-end;justify-content:space-between;gap:12px}
 .note{color:var(--muted);font-size:.9rem;margin-top:2px;overflow-wrap:anywhere}
 .meta{display:flex;flex-wrap:wrap;gap:6px 10px;margin-top:8px;font-size:.8rem;color:var(--muted);align-items:center}
 .meta a,.links a{color:var(--accent);font-weight:600;text-decoration:none}
+/* zona para tocar más grande sin mover nada (los links de las tarjetas medían 19 px de alto) */
+.meta a,.links a,.dact>a,.pick-act>a{padding:8px 0;margin:-8px 0}
 .links{display:flex;gap:12px;flex-wrap:wrap}
 .zone{display:inline-flex;gap:3px;align-items:center;color:var(--ink);font-weight:600}
 .price{font-weight:600;letter-spacing:.06em;color:var(--ink)}
@@ -178,7 +181,7 @@ textarea{resize:vertical;min-height:64px}
 .members div{display:flex;gap:10px;align-items:center}
 
 .pick{background:var(--accent);color:var(--accent-ink);border-radius:18px;padding:22px 18px;display:flex;flex-direction:column;gap:6px;min-height:130px;justify-content:center}
-.pick .k{font-size:.75rem;text-transform:uppercase;letter-spacing:.12em;opacity:.7;font-weight:600}
+.pick .k{font-size:.75rem;text-transform:uppercase;letter-spacing:.12em;font-weight:600}
 .pick .t{font-family:var(--display);font-weight:800;font-size:1.6rem;line-height:1.1;overflow-wrap:anywhere}
 .pick .n{opacity:.8;font-size:.92rem}
 .pick a{color:var(--accent-ink) !important;text-decoration:underline !important}
@@ -271,7 +274,7 @@ textarea{resize:vertical;min-height:64px}
 .dcard{display:flex;gap:12px;background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:10px;align-items:flex-start}
 .dcard img{width:76px;height:76px;object-fit:cover;border-radius:10px;flex:none;background:var(--line)}
 .dbody{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
-.dbody b{font-size:1rem;line-height:1.25;overflow-wrap:anywhere}
+.dbody b{font-size:1rem;line-height:1.3;overflow-wrap:anywhere}
 .dbody .note{font-size:.82rem;color:var(--muted)}
 .dk{font-size:.75rem;font-weight:600;color:var(--muted);display:inline-flex;gap:6px;align-items:center;text-transform:uppercase;letter-spacing:.06em}
 .dact{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-top:4px;flex-wrap:wrap}
@@ -289,7 +292,7 @@ textarea{resize:vertical;min-height:64px}
 /* 0.13.0: Por hacer / Hechos adentro de Para hacer */
 .donesw{display:flex;gap:4px;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:4px;align-self:flex-start}
 .donesw button{border:0;background:none;border-radius:999px;padding:7px 14px;font-weight:600;font-size:.88rem;color:var(--muted)}
-.donesw button b{font-weight:600;opacity:.75;margin-left:2px;font-variant-numeric:tabular-nums}
+.donesw button b{font-weight:600;margin-left:2px;font-variant-numeric:tabular-nums}
 .donesw button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
 
 /* 0.14.0: juntar ideas */
@@ -331,7 +334,7 @@ textarea{resize:vertical;min-height:64px}
 .fidea .fk{font-size:.75rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--accent)}
 .fidea a{color:var(--ink);font-weight:600;text-decoration:none;overflow-wrap:anywhere}
 .fact{display:flex;justify-content:space-between;align-items:center;margin-top:4px}
-.fact .linkbtn{padding:0}
+.fact .linkbtn{padding:10px 8px;margin:-10px -8px}
 
 .item .side{display:flex;flex-direction:column;align-items:center;gap:6px}
 .heart{border:0;background:none;color:var(--muted);font-size:1.25rem;line-height:1;padding:4px;display:flex;flex-direction:column;align-items:center;gap:3px;border-radius:10px}
@@ -345,7 +348,7 @@ textarea{resize:vertical;min-height:64px}
 .lsec.love{color:var(--accent)}
 .lsec:first-child{margin-top:0}
 
-#zonaChips .fchip b{opacity:.6;margin-left:2px;font-variant-numeric:tabular-nums}
+#zonaChips .fchip b{margin-left:2px;font-variant-numeric:tabular-nums}
 
 .alb{list-style:none;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .acard{border:1px solid var(--line);background:var(--surface);border-radius:16px;padding:0 0 10px;overflow:hidden;text-align:left;display:flex;flex-direction:column;gap:3px;color:var(--ink);min-width:0}
@@ -372,12 +375,15 @@ textarea{resize:vertical;min-height:64px}
 .rates .starpick button{font-size:1.7rem}
 .rates .stars{font-size:1.05rem}
 .ravg{font-size:.88rem;color:var(--muted, inherit);text-align:right}
-.rcount{font-size:.8em;opacity:.75}
+.rcount{font-size:max(11px,.8em)}
 
 /* Regla (0.19.3): nada se desliza de costado; todo entra en el ancho de la pantalla y se baja solo para abajo */
 html,body{overflow-x:hidden}
 .filters select{flex:none;max-width:100%;text-overflow:ellipsis;padding-right:6px}
 /* "Elegir día": el campo de fecha está escondido; el botón abre el calendario */
+.datebox{position:relative;display:flex}
+.datebox .tbtn{flex:1;white-space:nowrap}
+.sheet:focus{outline:none}
 input.ghostdate{position:absolute;width:1px;height:1px;padding:0;border:0;opacity:0;pointer-events:none}
 /* manija de las hojas que se cierran deslizando para abajo */
 .grab{display:block;width:44px;height:5px;border-radius:3px;background:var(--line);margin:-10px auto -4px;flex:none}
