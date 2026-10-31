@@ -142,22 +142,6 @@ service cloud.firestore {
           && optNum(request.resource.data, 'at');
       }
 
-      // Vuelos Baratos (otra app): precios de vuelos que anotan los miembros de la lista
-      match /vuelos/{id} {
-        allow read, delete: if isMember(gid);
-        allow create, update: if isMember(gid)
-          && id.matches('[a-z0-9]{1,24}')
-          && request.resource.data.keys().hasOnly(['id', 'src', 'srcName', 'url', 'route', 'dates', 'airline', 'amount', 'cur', 'final', 'at', 'by'])
-          && request.resource.data.id == id
-          && request.resource.data.route is string && request.resource.data.route.size() <= 100
-          && request.resource.data.amount is number
-          && optStr(request.resource.data, 'src', 40) && optStr(request.resource.data, 'srcName', 100)
-          && optStr(request.resource.data, 'url', 2000) && optStr(request.resource.data, 'dates', 100)
-          && optStr(request.resource.data, 'airline', 100) && optStr(request.resource.data, 'cur', 5)
-          && optStr(request.resource.data, 'at', 40) && optStr(request.resource.data, 'by', 100)
-          && (!('final' in request.resource.data) || request.resource.data.final is bool);
-      }
-
       // Fotos: solo los miembros, y solo una imagen JPEG guardada dentro del documento
       match /photos/{id} {
         allow read, delete: if isMember(gid);
