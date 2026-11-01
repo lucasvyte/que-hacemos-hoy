@@ -189,9 +189,11 @@ textarea{resize:vertical;min-height:64px}
 .pickf select{padding:9px 10px}
 
 /* 0.6.0: varias listas y planes */
-.listsw{border:0;background:none;padding:0;font:inherit;color:inherit;letter-spacing:inherit;text-align:left;display:inline-flex;align-items:center;gap:6px;max-width:100%}
+.listsw{border:0;background:none;padding:0;font:inherit;color:inherit;letter-spacing:inherit;text-align:left;display:inline;max-width:100%}
+.listsw.long{font-size:.8em}
 .listsw span{overflow-wrap:anywhere}
-.listsw .caret{flex:none;color:var(--muted);margin-top:4px}
+.listsw .lastw{white-space:nowrap}
+.listsw .caret{display:inline-block;vertical-align:middle;color:var(--muted);margin-left:4px;margin-top:-.12em}
 .lrow{display:flex;align-items:center;gap:10px;width:100%;text-align:left;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:12px}
 .lrow[aria-current="true"]{border-color:var(--accent);background:var(--accent-soft)}
 .lrow .ic{font-size:1.2rem;flex:none}

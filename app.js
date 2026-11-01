@@ -17,11 +17,12 @@ const firebaseConfig = {
   appId: "1:484182237158:web:62d2b437e50df691e14027"
 };
 
-const VERSION = "0.21.2";
+const VERSION = "0.21.3";
 /* Avisos: dirección del servidor de avisos (worker/avisos.js en Cloudflare). Vacío = los avisos no aparecen. */
 const PUSH_URL = "https://avisos.978-llv.workers.dev/";
 const VAPID_PUBLIC = "BNUj_Mhm11xCQ71kQFeJQJGWNhmlROka8QDX1-XwzV2GxAR9XiLn_28GFIthtoSYvlNR7qS1oP4pnsu5rIa2yHM";
 const CHANGELOG = [
+  ["0.21.3","El nombre de la lista arriba queda más prolijo: si es largo se achica un poco y la flechita va pegada al final. En Para descubrir, lugar y dirección se separan con “·” como en el resto de la app."],
   ["0.21.2","Más fácil de leer y de tocar: textos de ayuda y números con más contraste, links de las tarjetas (Cómo llegar, Ver reel) y botones chicos con más lugar para el dedo. Al agregar algo o armar un plan, el día se elige con un botón “📅 Elegir día”, como en Para descubrir."],
   ["0.21.1","Las ventanas de tus listas (cambiar, crear, sumarse) y del menú de la lista también se cierran deslizándolas para abajo."],
   ["0.21.0","Cerca tuyo: en el Mapa, “¿Qué tenemos cerca?” también muestra propuestas de Para descubrir (con ✨ en el mapa y “+ A mi lista”). En Para descubrir hay un botón “📍 Cerca” que ordena todo por distancia."],
@@ -679,7 +680,10 @@ function render(){
   if(hasLayer()) ensureGuard(); else releaseGuard();
   $("ver").textContent = VERSION;
   const pend = state.items.filter(i=>!i.done).length, done = state.items.filter(i=>i.done).length;
-  $("listName").textContent = state.group?.name || (state.loaded ? "Lista" : "");
+  { const nm = state.group?.name || (state.loaded ? "Lista" : ""), k = nm.trimEnd().lastIndexOf(" ");
+    $("listName").textContent = k > 0 ? nm.slice(0, k + 1) : "";
+    $("listLast").textContent = k > 0 ? nm.slice(k + 1) : nm;
+    $("listSw").classList.toggle("long", nm.length > 12); }
   const who = !state.group ? "" : state.group.private ? "🔒 Privada · " : (state.group.members||[]).length > 1 ? `👥 ${(state.group.members||[]).length} personas · ` : "";
   $("summary").textContent = state.loaded ? `${who}${pend} por hacer · ${done} hecho${done===1?"":"s"}` : "Cargando…";
   $("addLbl").textContent = state.view==="planes" ? "Nuevo plan" : state.view==="calendario" ? "Nuevo plan" : "Agregar";

@@ -27,7 +27,7 @@ async function turismo(){
   const list = JSON.parse(m[1]);
   return list.map(x => {
     const tipo = clean(x.categoria_actividad_filtro);
-    const lugar = [clean(x.proveedor), clean(x.calle_altura)].filter(v => v && v !== "-").join(" — ");
+    const lugar = [clean(x.proveedor), clean(x.calle_altura)].filter(v => v && v !== "-").join(" · ");
     const barrio = clean(x.barrio);
     return {
       id: "tba-" + clean(x.orden + "-" + x.nombre_actividad).toLowerCase().normalize("NFD").replace(/[^a-z0-9]+/g, "-").slice(0, 60),
